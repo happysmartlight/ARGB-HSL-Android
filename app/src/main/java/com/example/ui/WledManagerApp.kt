@@ -1439,7 +1439,8 @@ fun DeviceControlSection(
     val scrollState = rememberScrollState()
 
     val isPlaylistRunning by viewModel.isPlaylistRunning.collectAsStateWithLifecycle()
-    val playlistElapsedSeconds by viewModel.playlistElapsedSeconds.collectAsStateWithLifecycle()
+    val playlistElapsedSecondsState = viewModel.playlistElapsedSeconds.collectAsStateWithLifecycle()
+    val playlistElapsedSeconds by playlistElapsedSecondsState
     val playlistTotalSeconds by viewModel.playlistTotalSeconds.collectAsStateWithLifecycle()
     val playlistName by viewModel.playlistName.collectAsStateWithLifecycle()
     val playlistStepsCount by viewModel.playlistStepsCount.collectAsStateWithLifecycle()
@@ -2919,15 +2920,18 @@ fun DeviceControlSection(
                                                     val isScrubbing = remember { mutableStateOf(false) }
                                                     val densityVal = LocalDensity.current.density
                                                     
-                                                    LaunchedEffect(playlistElapsedSeconds, viewportWidthPx, isPlaylistRunning, isScrubbing.value) {
+                                                    LaunchedEffect(viewportWidthPx, isPlaylistRunning, isScrubbing.value) {
                                                         if (viewportWidthPx > 0 && (isPlaylistRunning || isScrubbing.value)) {
-                                                            val playheadPx = playlistElapsedSeconds * pxPerSec * densityVal
-                                                            val targetScrollPx = playheadPx - (viewportWidthPx / 2f)
-                                                            val maxScroll = timelineScrollState.maxValue
-                                                            val coercedScroll = targetScrollPx.toInt().coerceIn(0, maxScroll)
-                                                            if (timelineScrollState.value != coercedScroll) {
-                                                                timelineScrollState.scrollTo(coercedScroll)
-                                                            }
+                                                            androidx.compose.runtime.snapshotFlow { playlistElapsedSecondsState.value }
+                                                                .collect { currentSec ->
+                                                                    val playheadPx = currentSec * pxPerSec * densityVal
+                                                                    val targetScrollPx = playheadPx - (viewportWidthPx / 2f)
+                                                                    val maxScroll = timelineScrollState.maxValue
+                                                                    val coercedScroll = targetScrollPx.toInt().coerceIn(0, maxScroll)
+                                                                    if (timelineScrollState.value != coercedScroll) {
+                                                                        timelineScrollState.scrollTo(coercedScroll)
+                                                                    }
+                                                                }
                                                         }
                                                     }
 
@@ -3203,55 +3207,12 @@ fun DeviceControlSection(
                                                                     if (timeline != null && timeline.isLoaded) {
                                                                         Row(modifier = Modifier.fillMaxSize()) {
                                                                             timeline.steps.forEach { step ->
-                                                                                val stepWidthFloat = step.endSecond - step.startSecond
-                                                                                val stepWidth = (stepWidthFloat * pxPerSec).dp
-                                                                                val stepHue = (step.presetId * 43) % 360
-                                                                                val isStepActive = isPlaylistRunning && (playlistElapsedSeconds >= step.startSecond.toFloat() && playlistElapsedSeconds < step.endSecond.toFloat())
-
-                                                                                // Solve color via HSVToColor and convert to Compose Color
-                                                                                val stepColor = Color(HSVToColor(floatArrayOf(stepHue.toFloat(), 0.12f, 0.92f)))
-                                                                                val activeStepColor = Color(HSVToColor(floatArrayOf(stepHue.toFloat(), 0.32f, 0.95f)))
-                                                                                val stepBorderColor = Color(HSVToColor(floatArrayOf(stepHue.toFloat(), 0.25f, 0.75f)))
-                                                                                val activeStepBorderColor = Color(HSVToColor(floatArrayOf(stepHue.toFloat(), 0.80f, 0.70f)))
-                                                                                val activeStepTextColor = Color(HSVToColor(floatArrayOf(stepHue.toFloat(), 0.90f, 0.30f)))
-
-                                                                                Box(
-                                                                                    modifier = Modifier
-                                                                                        .width(stepWidth)
-                                                                                        .fillMaxHeight()
-                                                                                        .padding(horizontal = 0.5.dp)
-                                                                                        .clip(RoundedCornerShape(3.dp))
-                                                                                        .background(
-                                                                                            if (isStepActive) activeStepColor
-                                                                                            else stepColor
-                                                                                        )
-                                                                                        .border(
-                                                                                            width = if (isStepActive) 1.5.dp else 0.5.dp,
-                                                                                            color = if (isStepActive) activeStepBorderColor
-                                                                                                    else stepBorderColor,
-                                                                                            shape = RoundedCornerShape(3.dp)
-                                                                                        )
-                                                                                        .padding(horizontal = 2.dp),
-                                                                                    contentAlignment = Alignment.Center
-                                                                                ) {
-                                                                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                                                                                        Text(
-                                                                                            text = step.presetName,
-                                                                                            style = MaterialTheme.typography.bodySmall,
-                                                                                            fontSize = 7.5.sp,
-                                                                                            fontWeight = if (isStepActive) FontWeight.ExtraBold else FontWeight.Normal,
-                                                                                            color = if (isStepActive) activeStepTextColor else Color.DarkGray,
-                                                                                            maxLines = 1,
-                                                                                            overflow = TextOverflow.Ellipsis
-                                                                                        )
-                                                                                        Text(
-                                                                                            text = "${stepWidthFloat.toInt()}s",
-                                                                                            style = MaterialTheme.typography.bodySmall,
-                                                                                            fontSize = 6.sp,
-                                                                                            color = Color.DarkGray.copy(alpha = 0.5f)
-                                                                                        )
-                                                                                    }
-                                                                                }
+                                                                                TimelineStepItem(
+                                                                                    step = step,
+                                                                                    pxPerSec = pxPerSec,
+                                                                                    isPlaylistRunning = isPlaylistRunning,
+                                                                                    playlistElapsedSecondsState = playlistElapsedSecondsState
+                                                                                )
                                                                             }
                                                                         }
                                                                     } else {
@@ -3268,11 +3229,13 @@ fun DeviceControlSection(
                                                         }
 
                                                         // Playhead line overlaid over tracks inside horizontal scroll Container
-                                                        val playheadX = (playlistElapsedSeconds * pxPerSec).dp
                                                         Box(
                                                             modifier = Modifier
                                                                 .align(Alignment.TopStart)
-                                                                .offset(x = playheadX - 8.dp)
+                                                                .offset {
+                                                                    val pxOffset = playlistElapsedSecondsState.value * pxPerSec * density
+                                                                    androidx.compose.ui.unit.IntOffset((pxOffset - 8.dp.toPx()).toInt(), 0)
+                                                                }
                                                                 .width(16.dp)
                                                                 .fillMaxHeight()
                                                         ) {
@@ -3782,6 +3745,68 @@ fun EmptyControlState() {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
                 textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+fun TimelineStepItem(
+    step: com.example.viewmodel.DevicePlaylistStep,
+    pxPerSec: Float,
+    isPlaylistRunning: Boolean,
+    playlistElapsedSecondsState: androidx.compose.runtime.State<Float>
+) {
+    val stepWidthFloat = step.endSecond - step.startSecond
+    val stepWidth = (stepWidthFloat * pxPerSec).dp
+    val stepHue = (step.presetId * 43) % 360
+    
+    val isStepActive by remember(isPlaylistRunning) {
+        derivedStateOf {
+            isPlaylistRunning && (playlistElapsedSecondsState.value >= step.startSecond.toFloat() && playlistElapsedSecondsState.value < step.endSecond.toFloat())
+        }
+    }
+
+    val stepColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.12f, 0.92f)))
+    val activeStepColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.32f, 0.95f)))
+    val stepBorderColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.25f, 0.75f)))
+    val activeStepBorderColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.80f, 0.70f)))
+    val activeStepTextColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.90f, 0.30f)))
+
+    Box(
+        modifier = Modifier
+            .width(stepWidth)
+            .fillMaxHeight()
+            .padding(horizontal = 0.5.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(
+                if (isStepActive) activeStepColor
+                else stepColor
+            )
+            .border(
+                width = if (isStepActive) 1.5.dp else 0.5.dp,
+                color = if (isStepActive) activeStepBorderColor
+                        else stepBorderColor,
+                shape = RoundedCornerShape(3.dp)
+            )
+            .padding(horizontal = 2.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text(
+                text = step.presetName,
+                style = MaterialTheme.typography.bodySmall,
+                fontSize = 7.5.sp,
+                fontWeight = if (isStepActive) FontWeight.ExtraBold else FontWeight.Normal,
+                color = if (isStepActive) activeStepTextColor else Color.DarkGray,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "${stepWidthFloat.toInt()}s",
+                style = MaterialTheme.typography.bodySmall,
+                fontSize = 6.sp,
+                color = Color.DarkGray.copy(alpha = 0.5f)
             )
         }
     }
