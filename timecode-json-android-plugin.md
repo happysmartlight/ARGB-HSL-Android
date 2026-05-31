@@ -3,11 +3,192 @@
 > **Context:** This document describes the `timecode_config.json` file format produced by the
 > **HSL Tool** (PySide6 desktop app for ARGB HSL/WLED-style LED controllers), and the
 > algorithm an Android plugin must implement to:
-> 1. Parse the file
-> 2. Collect mock (virtual) and real device info
-> 3. Let the user map mock → real devices
-> 4. Bake presets onto real WLED devices
-> 5. Upload the compiled playlist
+> 1. **Decrypt** the file (see Section 0) — the on-disk file is encrypted; only HSL apps can read it
+> 2. Parse the decrypted JSON
+> 3. Collect mock (virtual) and real device info
+> 4. Let the user map mock → real devices
+> 5. Bake presets onto real WLED devices
+> 6. Upload the compiled playlist
+
+---
+
+## 0. File Container & Decryption
+
+> **The file on disk is NOT plain JSON.** It is encrypted so only Happy Smart Light apps
+> (the desktop HSL Tool + this Android plugin) can read it. You must decrypt it first, then
+> parse the result as the JSON described in Section 2.
+>
+> **Security model:** the secret key is embedded in both apps, so this is *format locking /
+> tamper protection* (obfuscation), not protection against someone who reverse-engineers the
+> app. The goal is simply "only HSL apps understand the file".
+
+Reference implementation: [`services/timecode_crypto.py`](../services/timecode_crypto.py) in the
+desktop tool. **Every constant below MUST match it byte-for-byte.**
+
+### 0.1 Outer JSON envelope
+
+The file content is UTF-8 text holding a tiny JSON object:
+
+```json
+{ "hsl_timecode": "<base64-of-binary-container>", "v": 1 }
+```
+
+If the file is not a JSON object, or is missing the `hsl_timecode` key, **reject it** (it is an
+old plaintext file or a foreign format). Base64-decode `hsl_timecode` to get the binary container.
+
+### 0.2 Binary container layout
+
+```
+offset  size   field
+0       4      MAGIC        = ASCII "HSLT"  (0x48 0x53 0x4C 0x54)
+4       1      FORMAT_VER   = 1
+5       16     salt         (random per file)
+21      16     nonce        (random per file)
+37      N      ciphertext
+37+N    32     tag          (HMAC-SHA256, Encrypt-then-MAC)
+```
+
+Validate `MAGIC` and `FORMAT_VER` before doing anything else.
+
+### 0.3 Constants (must match desktop tool)
+
+| Constant | Value |
+|----------|-------|
+| `APP_SECRET` | `"HSL.TIMECODE.v1.4f2c8a91-6b0e-4d3a-9c77-happysmartlight"` (UTF-8 bytes) |
+| `PBKDF2_ITERS` | `200000` |
+| PBKDF2 PRF | HMAC-SHA256 |
+| derived key length | 64 bytes |
+| `SALT_LEN` / `NONCE_LEN` / `TAG_LEN` | 16 / 16 / 32 |
+
+### 0.4 Algorithm
+
+**1. Derive keys** from the per-file `salt`:
+
+```
+km      = PBKDF2_HMAC_SHA256(APP_SECRET, salt, 200000, dkLen = 64)
+encKey  = km[0..32)     // 32 bytes — keystream
+macKey  = km[32..64)    // 32 bytes — authentication
+```
+
+**2. Verify the tag FIRST (Encrypt-then-MAC).** Do not decrypt if it fails:
+
+```
+header   = MAGIC || FORMAT_VER || salt || nonce        // 37 bytes
+expected = HMAC_SHA256(macKey, header || ciphertext)   // 32 bytes
+if (!constantTimeEquals(expected, tag)) reject "file tampered"
+```
+
+**3. Decrypt** with an HMAC-SHA256 keystream in CTR mode, then XOR:
+
+```
+block(i)  = HMAC_SHA256(encKey, nonce || uint64_be(i))   // 32 bytes per block, i = 0,1,2,...
+keystream = block(0) || block(1) || ...   // truncate to ciphertext length
+plaintext = ciphertext XOR keystream
+```
+
+`uint64_be(i)` is the counter as an 8-byte **big-endian** unsigned integer.
+
+**4. Parse** `plaintext` (UTF-8) as JSON — this is the object in Section 2.
+
+> Encryption (if the Android app ever needs to *write* a file) is the exact reverse: random
+> salt+nonce → derive keys → XOR keystream → compute tag → assemble container → base64 → envelope.
+
+### 0.5 Kotlin reference (decrypt)
+
+```kotlin
+import org.json.JSONObject
+import java.security.MessageDigest
+import javax.crypto.Mac
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
+import javax.crypto.spec.SecretKeySpec
+import android.util.Base64
+import java.nio.ByteBuffer
+
+private val APP_SECRET = "HSL.TIMECODE.v1.4f2c8a91-6b0e-4d3a-9c77-happysmartlight".toByteArray(Charsets.UTF_8)
+private const val PBKDF2_ITERS = 200_000
+private val MAGIC = byteArrayOf('H'.code.toByte(), 'S'.code.toByte(), 'L'.code.toByte(), 'T'.code.toByte())
+private const val FORMAT_VER = 1
+private const val SALT_LEN = 16
+private const val NONCE_LEN = 16
+private const val TAG_LEN = 32
+
+class TimecodeCryptoException(msg: String) : Exception(msg)
+
+private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray =
+    Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }.doFinal(data)
+
+private fun deriveKeys(salt: ByteArray): Pair<ByteArray, ByteArray> {
+    // PBEKeySpec uses chars; APP_SECRET is ASCII so this maps 1:1 to the Python bytes.
+    val spec = PBEKeySpec(String(APP_SECRET, Charsets.UTF_8).toCharArray(), salt, PBKDF2_ITERS, 64 * 8)
+    val km = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+    return km.copyOfRange(0, 32) to km.copyOfRange(32, 64)
+}
+
+private fun keystream(encKey: ByteArray, nonce: ByteArray, length: Int): ByteArray {
+    val out = ByteArray(length)
+    var counter = 0L
+    var pos = 0
+    while (pos < length) {
+        val ctr = ByteBuffer.allocate(8).putLong(counter).array() // big-endian
+        val block = hmacSha256(encKey, nonce + ctr)
+        val n = minOf(block.size, length - pos)
+        System.arraycopy(block, 0, out, pos, n)
+        pos += n; counter++
+    }
+    return out
+}
+
+fun decryptTimecode(fileText: String): JSONObject {
+    val envelope = JSONObject(fileText)
+    if (!envelope.has("hsl_timecode")) throw TimecodeCryptoException("Not an HSL timecode file")
+    val blob = Base64.decode(envelope.getString("hsl_timecode"), Base64.DEFAULT)
+
+    val minLen = 4 + 1 + SALT_LEN + NONCE_LEN + TAG_LEN
+    if (blob.size < minLen) throw TimecodeCryptoException("Too short")
+    if (!blob.copyOfRange(0, 4).contentEquals(MAGIC)) throw TimecodeCryptoException("Bad magic")
+    if (blob[4].toInt() != FORMAT_VER) throw TimecodeCryptoException("Bad version")
+
+    val salt  = blob.copyOfRange(5, 5 + SALT_LEN)
+    val nonce = blob.copyOfRange(5 + SALT_LEN, 5 + SALT_LEN + NONCE_LEN)
+    val ct    = blob.copyOfRange(5 + SALT_LEN + NONCE_LEN, blob.size - TAG_LEN)
+    val tag   = blob.copyOfRange(blob.size - TAG_LEN, blob.size)
+
+    val (encKey, macKey) = deriveKeys(salt)
+    val header = MAGIC + byteArrayOf(FORMAT_VER.toByte()) + salt + nonce
+    val expected = hmacSha256(macKey, header + ct)
+    if (!MessageDigest.isEqual(expected, tag)) throw TimecodeCryptoException("Tag mismatch — file tampered")
+
+    val plain = ByteArray(ct.size)
+    val ks = keystream(encKey, nonce, ct.size)
+    for (i in ct.indices) plain[i] = (ct[i].toInt() xor ks[i].toInt()).toByte()
+    return JSONObject(String(plain, Charsets.UTF_8))
+}
+```
+
+### 0.6 Test vector (validate your implementation byte-for-byte)
+
+With the production `APP_SECRET` and these **fixed** salt/nonce:
+
+| Field | Value |
+|-------|-------|
+| plaintext | `{"version":1,"hello":"HSL"}` |
+| salt (hex) | `00112233445566778899aabbccddeeff` |
+| nonce (hex) | `ffeeddccbbaa99887766554433221100` |
+| derived encKey (hex) | `2f24e3d05c72fa0d2b8356a6b7cffa36e60e9c891953a2444f79bbf6603394a3` |
+| derived macKey (hex) | `ffae6e116beed5ec87f390caff54aee44102b9f14e4e34f472fe7284eb4a6a43` |
+| ciphertext (hex) | `d4717dae8460d23586b3208a34bc0101d4d76e860bbb7e0c6ea9a7` |
+| tag (hex) | `e3da01369ec52c17b97b431c2668a38738e9bcbb8d22ac5a3cff6c1ca9fa31e9` |
+
+Decoding this envelope must yield the plaintext above:
+
+```json
+{ "hsl_timecode": "SFNMVAEAESIzRFVmd4iZqrvM3e7//+7dzLuqmYh3ZlVEMyIRANRxfa6EYNI1hrMgijS8AQHU126GC7t+DG6pp+PaATaexSwXuXtDHCZoo4c46by7jSKsWjz/bByp+jHp", "v": 1 }
+```
+
+> Note: in production each saved file uses a **random** salt and nonce, so the base64 differs
+> every time — only the decrypted plaintext is stable. The fixed values above are for testing the
+> algorithm, not what real files look like.
 
 ---
 

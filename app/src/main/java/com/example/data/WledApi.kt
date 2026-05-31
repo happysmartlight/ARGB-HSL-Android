@@ -17,6 +17,7 @@ data class WledStateRequest(
     @Json(name = "on") val on: Boolean? = null,
     @Json(name = "bri") val bri: Int? = null,
     @Json(name = "ps") val ps: Int? = null,
+    @Json(name = "pdel") val pdel: Int? = null,
     @Json(name = "seg") val seg: List<WledSegmentRequest>? = null
 )
 
@@ -70,6 +71,12 @@ data class WledLedsInfo(
 )
 
 @JsonClass(generateAdapter = true)
+data class WledFilesystemInfo(
+    @Json(name = "u") val usedBytes: Long? = null,
+    @Json(name = "t") val totalBytes: Long? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class WledInfo(
     @Json(name = "ver") val ver: String? = null,
     @Json(name = "vid") val vid: Int? = null,
@@ -81,7 +88,8 @@ data class WledInfo(
     @Json(name = "product") val product: String? = null,
     @Json(name = "cn") val cn: String? = null,
     @Json(name = "leds") val leds: WledLedsInfo? = null,
-    @Json(name = "brand") val brand: String? = null
+    @Json(name = "brand") val brand: String? = null,
+    @Json(name = "fs") val fs: WledFilesystemInfo? = null
 )
 
 @JsonClass(generateAdapter = true)

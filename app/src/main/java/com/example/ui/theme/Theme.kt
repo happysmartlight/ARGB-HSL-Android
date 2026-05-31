@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 
 private val CyberDarkColorScheme = darkColorScheme(
@@ -52,9 +53,14 @@ fun MyApplicationTheme(
 ) {
     val colorScheme = if (darkTheme) CyberDarkColorScheme else CyberLightColorScheme
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    // Screen-aware dimensions + typography so the UI adapts across phone/tablet sizes.
+    val dimens = rememberAppDimens()
+
+    CompositionLocalProvider(LocalAppDimens provides dimens) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = appTypography(dimens.fontScale),
+            content = content
+        )
+    }
 }

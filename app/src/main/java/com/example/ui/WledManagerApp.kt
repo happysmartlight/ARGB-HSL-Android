@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -58,9 +59,17 @@ import com.example.viewmodel.WledEffect
 import com.example.viewmodel.WledPalette
 import com.example.viewmodel.WledViewModel
 import com.example.viewmodel.AddDeviceState
+import com.example.viewmodel.DevicePresetStorageStats
+import com.example.viewmodel.PresetBulkDeletePreview
+import com.example.viewmodel.PresetBulkDeleteUiState
+import com.example.viewmodel.PresetDeleteAction
+import com.example.viewmodel.PresetDeviceDeleteError
+import com.example.viewmodel.PresetDeletePreview
+import com.example.viewmodel.PresetDeleteUiState
 import com.example.viewmodel.TimecodeMockDevice
 import com.example.viewmodel.TimecodeImportUiState
 import com.example.viewmodel.TimecodeUploadResult
+import com.example.ui.theme.LocalAppDimens
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -134,6 +143,207 @@ fun ArgbHslLogo(modifier: Modifier = Modifier) {
     }
 }
 
+@Composable
+private fun CompactAppTopBar(
+    devices: List<WledDevice>,
+    selectedDevice: WledDevice?,
+    isWideScreen: Boolean,
+    horizontalPadding: Dp,
+    onPlayAll: () -> Unit,
+    onInfo: () -> Unit,
+    onLogs: () -> Unit,
+    onRefresh: () -> Unit,
+    onAdd: () -> Unit
+) {
+    val barHeight = if (isWideScreen) 38.dp else 40.dp
+    val iconButtonSize = if (isWideScreen) 30.dp else 31.dp
+    val iconSize = if (isWideScreen) 16.dp else 17.dp
+    val selectedName = selectedDevice?.name
+    val onlineCount = devices.count { it.isOnline }
+
+    Surface(
+        color = MaterialTheme.colorScheme.background,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(barHeight)
+                .padding(horizontal = horizontalPadding.coerceAtMost(12.dp)),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            ArgbHslLogo(modifier = Modifier.size(18.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = "ARGB",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1
+                )
+                Text(
+                    text = "HSL",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Light,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1
+                )
+                if (isWideScreen && selectedName != null) {
+                    Text(
+                        text = "  ${selectedName}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                } else {
+                    Spacer(modifier = Modifier.width(2.dp))
+                }
+                if (isWideScreen && onlineCount > 0) {
+                    Text(
+                        text = "$onlineCount online",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF00A86B),
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            CompactTopIconButton(
+                onClick = onPlayAll,
+                imageVector = Icons.Default.PlayArrow,
+                contentDescription = "Đồng loạt (All)",
+                modifier = Modifier.testTag("play_shortcut_button"),
+                iconSize = iconSize,
+                buttonSize = iconButtonSize
+            )
+            CompactTopIconButton(
+                onClick = onInfo,
+                imageVector = Icons.Default.Info,
+                contentDescription = "Thông tin ứng dụng",
+                modifier = Modifier.testTag("app_info_button"),
+                iconSize = iconSize,
+                buttonSize = iconButtonSize
+            )
+            CompactTopIconButton(
+                onClick = onLogs,
+                imageVector = Icons.Default.Build,
+                contentDescription = "Nhật ký hệ thống",
+                modifier = Modifier.testTag("app_logs_button"),
+                iconSize = iconSize,
+                buttonSize = iconButtonSize
+            )
+            CompactTopIconButton(
+                onClick = onRefresh,
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "Tải lại danh sách",
+                modifier = Modifier.testTag("refresh_all_button"),
+                iconSize = iconSize,
+                buttonSize = iconButtonSize
+            )
+            CompactTopIconButton(
+                onClick = onAdd,
+                imageVector = Icons.Default.Add,
+                contentDescription = "Thêm thiết bị",
+                modifier = Modifier.testTag("add_device_fab"),
+                iconSize = iconSize,
+                buttonSize = iconButtonSize
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactTopIconButton(
+    onClick: () -> Unit,
+    imageVector: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    iconSize: Dp,
+    buttonSize: Dp
+) {
+    Box(
+        modifier = modifier
+            .size(buttonSize)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = imageVector,
+            contentDescription = contentDescription,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(iconSize)
+        )
+    }
+}
+
+@Composable
+private fun CompactControlTabRow(
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit
+) {
+    val tabs = listOf(
+        "Thử Mạch Lẻ",
+        "Đồng Loạt (All)",
+        "Nút Custom"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(38.dp)
+            .background(MaterialTheme.colorScheme.background),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        tabs.forEachIndexed { index, label ->
+            val selected = selectedTab == index
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable { onTabSelected(index) },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.62f)
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth(if (selected) 0.62f else 1f)
+                        .height(if (selected) 2.dp else 1.dp)
+                        .background(
+                            if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)
+                            }
+                        )
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WledManagerApp(viewModel: WledViewModel) {
@@ -152,95 +362,28 @@ fun WledManagerApp(viewModel: WledViewModel) {
     // Rộng màn hình để đưa ra phân giải Responsive Master-Detail
     val configuration = LocalConfiguration.current
     val isWideScreen = configuration.screenWidthDp >= 720
+    val dimens = LocalAppDimens.current
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ArgbHslLogo(
-                            modifier = Modifier.size(28.dp)
-                        )
-                        Text(
-                            text = "ARGB",
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.primary,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = "HSL",
-                            fontWeight = FontWeight.Light,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
+            CompactAppTopBar(
+                devices = devices,
+                selectedDevice = selectedDevice,
+                isWideScreen = isWideScreen,
+                horizontalPadding = dimens.screenPadding,
+                onPlayAll = {
+                    viewModel.setSelectedTab(1)
+                    if (selectedDevice == null) {
+                        val target = devices.find { it.isOnline } ?: devices.firstOrNull()
+                        if (target != null) {
+                            viewModel.selectDevice(target)
+                        }
                     }
                 },
-                actions = {
-                    IconButton(
-                        onClick = {
-                            viewModel.setSelectedTab(1)
-                            if (selectedDevice == null) {
-                                val target = devices.find { it.isOnline } ?: devices.firstOrNull()
-                                if (target != null) {
-                                    viewModel.selectDevice(target)
-                                }
-                            }
-                        },
-                        modifier = Modifier.testTag("play_shortcut_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Đồng loạt (All)",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    IconButton(
-                        onClick = { showInfoDialog = true },
-                        modifier = Modifier.testTag("app_info_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = "Thông tin ứng dụng",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    IconButton(
-                        onClick = { showLogsDialog = true },
-                        modifier = Modifier.testTag("app_logs_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Build,
-                            contentDescription = "Nhật ký hệ thống",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    IconButton(
-                        onClick = { viewModel.refreshAllDevices() },
-                        modifier = Modifier.testTag("refresh_all_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Tải lại danh sách",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    IconButton(
-                        onClick = { showAddDialog = true },
-                        modifier = Modifier.testTag("add_device_fab")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Thêm thiết bị",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                onInfo = { showInfoDialog = true },
+                onLogs = { showLogsDialog = true },
+                onRefresh = { viewModel.refreshAllDevices() },
+                onAdd = { showAddDialog = true }
             )
         },
         containerColor = MaterialTheme.colorScheme.background
@@ -1014,6 +1157,7 @@ fun DeviceListSection(
     onAddDeviceClick: () -> Unit,
     onQuickAddDevice: (String, String) -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     val isPortrait = LocalConfiguration.current.screenWidthDp < 720
 
     Box(
@@ -1023,7 +1167,7 @@ fun DeviceListSection(
         if (isPortrait) {
             ArgbHslLogo(
                 modifier = Modifier
-                    .size(260.dp)
+                    .size((dimens.screenWidthDp * 0.66f).dp.coerceIn(180.dp, 300.dp))
                     .alpha(0.12f)
             )
         }
@@ -1031,7 +1175,7 @@ fun DeviceListSection(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(dimens.screenPadding)
         ) {
         if (unlinkedDiscoveredDevices.isNotEmpty()) {
             Row(
@@ -1480,6 +1624,12 @@ fun DeviceControlSection(
     val activeStepsMap by viewModel.activeStepsMap.collectAsStateWithLifecycle()
     val isTimelineLocked by viewModel.isTimelineLocked.collectAsStateWithLifecycle()
     val isChoreographyMode by viewModel.isChoreographyMode.collectAsStateWithLifecycle()
+    val activePresetStats by viewModel.activeDevicePresetStats.collectAsStateWithLifecycle()
+    val presetDeleteState by viewModel.presetDeleteState.collectAsStateWithLifecycle()
+    val bulkPresetDeleteState by viewModel.bulkPresetDeleteState.collectAsStateWithLifecycle()
+    val onlinePresetStats by viewModel.onlineDevicePresetStats.collectAsStateWithLifecycle()
+
+    val dimens = LocalAppDimens.current
 
     val syncPlaylistIdInput = "249"
     var syncBrightnessAll by remember { mutableFloatStateOf(128f) }
@@ -1489,6 +1639,12 @@ fun DeviceControlSection(
     val selectedAudioUri by viewModel.selectedAudioUri.collectAsStateWithLifecycle()
     val audioHistory by viewModel.audioHistory.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    LaunchedEffect(device.id) {
+        if (device.isOnline) {
+            viewModel.refreshActiveDeviceMemoryAndPresetStats(device)
+        }
+    }
 
     val timecodeLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
@@ -1535,6 +1691,18 @@ fun DeviceControlSection(
         )
     }
 
+    PresetDeleteDialog(
+        state = presetDeleteState,
+        onConfirm = { preview -> viewModel.confirmPresetDeletion(device, preview.action) },
+        onDismiss = { viewModel.dismissPresetDeletionDialog() }
+    )
+
+    PresetBulkDeleteDialog(
+        state = bulkPresetDeleteState,
+        onConfirm = { preview -> viewModel.confirmPresetDeletionForOnlineDevices(preview.action) },
+        onDismiss = { viewModel.dismissBulkPresetDeletionDialog() }
+    )
+
     val audioPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -1579,6 +1747,12 @@ fun DeviceControlSection(
         val playlistId = syncPlaylistIdInput.toIntOrNull() ?: 249
         kotlinx.coroutines.delay(300) // Debounce typing input
         viewModel.fetchTimelinesForAllDevices(playlistId)
+    }
+
+    LaunchedEffect(selectedTab, onlineDevicesKey) {
+        if (selectedTab == 1) {
+            viewModel.refreshOnlineDevicePresetStats()
+        }
     }
 
     // HSV Color state for advanced picker
@@ -1640,21 +1814,31 @@ fun DeviceControlSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = dimens.screenPadding, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (!isWideScreen) {
-                IconButton(onClick = onBack) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onBack),
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Quay lại danh sách",
-                        tint = MaterialTheme.colorScheme.onBackground
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(19.dp)
                     )
                 }
             }
 
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
                 val (title, subtitle) = when (selectedTab) {
                     0 -> Pair("THỬ MẠCH LẺ", "Tìm hiểu, tinh chỉnh từng thiết bị riêng lẻ")
                     1 -> Pair("ĐỒNG LOẠT TOÀN BỘ (All)", "Điều khiển đồng thời tất cả các mạch")
@@ -1662,41 +1846,29 @@ fun DeviceControlSection(
                 }
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
-                )
+                if (isWideScreen) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
 
         // Segment Tabs Control
-        TabRow(
-            selectedTabIndex = selectedTab,
-            containerColor = MaterialTheme.colorScheme.background,
-            contentColor = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Tab(
-                selected = selectedTab == 0,
-                onClick = { viewModel.setSelectedTab(0) },
-                text = { Text("Thử Mạch Lẻ", fontWeight = FontWeight.Bold) }
-            )
-            Tab(
-                selected = selectedTab == 1,
-                onClick = { viewModel.setSelectedTab(1) },
-                text = { Text("Đồng Loạt (All)", fontWeight = FontWeight.Bold) }
-            )
-            Tab(
-                selected = selectedTab == 2,
-                onClick = { viewModel.setSelectedTab(2) },
-                text = { Text("Nút Custom", fontWeight = FontWeight.Bold) }
-            )
-        }
+        CompactControlTabRow(
+            selectedTab = selectedTab,
+            onTabSelected = viewModel::setSelectedTab
+        )
 
         if (!device.isOnline && selectedTab == 0) {
             Box(
@@ -1736,8 +1908,8 @@ fun DeviceControlSection(
                     .weight(1f)
                     .fillMaxWidth()
                     .verticalScroll(scrollState)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp)
+                    .padding(dimens.screenPadding),
+                verticalArrangement = Arrangement.spacedBy(dimens.sectionSpacing)
             ) {
                 // Master Brightness Slider (Sáng - Tắt) (Only show for single-device controlling tabs)
                 if (selectedTab != 1) {
@@ -1939,7 +2111,7 @@ fun DeviceControlSection(
                         )
 
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(3),
+                            columns = GridCells.Fixed(if (dimens.screenWidthDp >= 720) 5 else 3),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(160.dp),
@@ -2176,6 +2348,13 @@ fun DeviceControlSection(
                                     Text("Địa chỉ IP truy cập:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                                     Text(device.ipAddress, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
                                 }
+
+                                DeviceInfoDivider()
+                                DeviceMemoryInfoRows(
+                                    fs = activeDetails?.info?.fs,
+                                    wifiSignal = activeDetails?.info?.wifi?.signal ?: device.wifiSignal,
+                                    stats = activePresetStats
+                                )
                                 
                                 val info = activeDetails?.info
                                 if (info != null) {
@@ -2247,6 +2426,11 @@ fun DeviceControlSection(
                                 }
                             }
                         }
+                        PresetCleanupPanel(
+                            stats = activePresetStats,
+                            isBusy = presetDeleteState.isPreparing || presetDeleteState.isDeleting,
+                            onAction = { action -> viewModel.preparePresetDeletion(device, action) }
+                        )
                     }
 
                     1 -> {
@@ -2369,7 +2553,7 @@ fun DeviceControlSection(
                                     Text("BẢNG MÀU CHỈ UY SÂN KHẤU (SCENE PRESETS)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                                 }
                                 LazyVerticalGrid(
-                                    columns = GridCells.Fixed(3),
+                                    columns = GridCells.Fixed(if (dimens.screenWidthDp >= 720) 5 else 3),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(160.dp),
@@ -2907,54 +3091,69 @@ fun DeviceControlSection(
                                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)),
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Row(
+                                            // Two flexible rows so this never overflows on narrow phones:
+                                            // row 1 = label + stretchy slider + %, row 2 = preset chips spread evenly.
+                                            Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .padding(8.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                                verticalAlignment = Alignment.CenterVertically
+                                                verticalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
                                                 val zoomPercent = (((pxPerSec - 8f) / 42f) * 100f).toInt().coerceIn(0, 100)
-                                                Text(
-                                                    text = "Thu phóng thước đo:",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    fontSize = 10.5.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                                )
-                                                Slider(
-                                                    value = pxPerSec,
-                                                    onValueChange = { pxPerSec = it },
-                                                    valueRange = 8f..50f,
-                                                    modifier = Modifier.width(140.dp).height(24.dp),
-                                                    colors = SliderDefaults.colors(
-                                                        thumbColor = MaterialTheme.colorScheme.primary,
-                                                        activeTrackColor = MaterialTheme.colorScheme.primary
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = "Thu phóng:",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1,
+                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                                                     )
-                                                )
-                                                Text(
-                                                    text = "$zoomPercent%",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
-                                                
-                                                Spacer(modifier = Modifier.weight(1f))
-                                                
-                                                listOf(
-                                                    Pair("25%", 18.5f),
-                                                    Pair("50%", 29f),
-                                                    Pair("75%", 39.5f),
-                                                    Pair("100%", 50f)
-                                                ).forEach { (label, zoomVal) ->
-                                                    val isSelected = Math.abs(pxPerSec - zoomVal) < 1f
-                                                    InputChip(
-                                                        selected = isSelected,
-                                                        onClick = { pxPerSec = zoomVal },
-                                                        label = { Text(label, fontSize = 9.5.sp) },
-                                                        modifier = Modifier.height(26.dp)
+                                                    Slider(
+                                                        value = pxPerSec,
+                                                        onValueChange = { pxPerSec = it },
+                                                        valueRange = 8f..50f,
+                                                        modifier = Modifier.weight(1f).height(24.dp),
+                                                        colors = SliderDefaults.colors(
+                                                            thumbColor = MaterialTheme.colorScheme.primary,
+                                                            activeTrackColor = MaterialTheme.colorScheme.primary
+                                                        )
                                                     )
+                                                    Text(
+                                                        text = "$zoomPercent%",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    listOf(
+                                                        Pair("25%", 18.5f),
+                                                        Pair("50%", 29f),
+                                                        Pair("75%", 39.5f),
+                                                        Pair("100%", 50f)
+                                                    ).forEach { (label, zoomVal) ->
+                                                        val isSelected = Math.abs(pxPerSec - zoomVal) < 1f
+                                                        InputChip(
+                                                            selected = isSelected,
+                                                            onClick = { pxPerSec = zoomVal },
+                                                            label = {
+                                                                Text(
+                                                                    label,
+                                                                    modifier = Modifier.fillMaxWidth(),
+                                                                    textAlign = TextAlign.Center
+                                                                )
+                                                            },
+                                                            modifier = Modifier.weight(1f).height(28.dp)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -3153,7 +3352,15 @@ fun DeviceControlSection(
                                                                         )
                                                                     }
                                                             ) {
-                                                                val tickStep = if (pxPerSec >= 24) 5 else if (pxPerSec >= 14) 10 else 20
+                                                                // Finer labels: the more you zoom in, the smaller the step between
+                                                                // labelled seconds (down to every 2s), with 1-second minor ticks.
+                                                                val tickStep = when {
+                                                                    pxPerSec >= 38 -> 2
+                                                                    pxPerSec >= 24 -> 5
+                                                                    pxPerSec >= 13 -> 10
+                                                                    else -> 20
+                                                                }
+                                                                val minorStep = if (pxPerSec >= 24) 1 else 2
                                                                 val majorTickColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
                                                                 val minorTickColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
                                                                 val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -3166,7 +3373,7 @@ fun DeviceControlSection(
                                                                     val pps = pxPerSec * rulerDensity
                                                                     var s = 0
                                                                     while (s <= playlistTotalSeconds) {
-                                                                        if (s % tickStep != 0 && s % 2 == 0) {
+                                                                        if (s % tickStep != 0 && s % minorStep == 0) {
                                                                             val x = s * pps
                                                                             drawLine(
                                                                                 color = minorTickColor,
@@ -3730,6 +3937,13 @@ fun DeviceControlSection(
                                 }
                             }
                         }
+                        BulkPresetCleanupPanel(
+                            devices = devices,
+                            onlineStats = onlinePresetStats,
+                            isBusy = bulkPresetDeleteState.isPreparing || bulkPresetDeleteState.isDeleting,
+                            onRefresh = { viewModel.refreshOnlineDevicePresetStats() },
+                            onAction = { action -> viewModel.preparePresetDeletionForOnlineDevices(action) }
+                        )
                     }
 
                     2 -> {
@@ -3803,7 +4017,7 @@ fun DeviceControlSection(
                         )
 
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
+                            columns = GridCells.Fixed(if (dimens.screenWidthDp >= 720) 3 else 2),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(260.dp),
@@ -3877,6 +4091,811 @@ fun DeviceControlSection(
         }
     }
 }
+}
+
+@Composable
+private fun DeviceInfoDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+    )
+}
+
+@Composable
+private fun DeviceInfoRow(
+    label: String,
+    value: String,
+    valueColor: Color? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value,
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.bodySmall,
+            color = valueColor ?: MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun DeviceMemoryInfoRows(
+    fs: WledFilesystemInfo?,
+    wifiSignal: Int?,
+    stats: DevicePresetStorageStats
+) {
+    val usedBytes = fs?.usedBytes
+    val totalBytes = fs?.totalBytes
+    val percent = if (usedBytes != null && totalBytes != null && totalBytes > 0L) {
+        ((usedBytes * 100L) / totalBytes).toInt()
+    } else {
+        null
+    }
+    val freeBytes = if (usedBytes != null && totalBytes != null && totalBytes >= usedBytes) {
+        totalBytes - usedBytes
+    } else {
+        null
+    }
+    val statusColor = when {
+        percent == null -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+        percent < 70 -> Color(0xFF00A86B)
+        percent < 85 -> Color(0xFFFFB300)
+        else -> Color(0xFFD50000)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        DeviceInfoRow(
+            label = "Bộ nhớ filesystem:",
+            value = if (percent != null && usedBytes != null && totalBytes != null) {
+                "$percent% (${formatDeviceBytes(usedBytes)} / ${formatDeviceBytes(totalBytes)})"
+            } else {
+                "N/A"
+            },
+            valueColor = statusColor
+        )
+        if (percent != null) {
+            LinearProgressIndicator(
+                progress = { (percent / 100f).coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                color = statusColor,
+                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
+            )
+            DeviceInfoRow(
+                label = "Tình trạng bộ nhớ:",
+                value = storageStatusText(percent),
+                valueColor = statusColor
+            )
+            DeviceInfoDivider()
+            DeviceInfoRow(
+                label = "Dung lượng còn trống:",
+                value = formatDeviceBytes(freeBytes),
+                valueColor = statusColor
+            )
+        }
+
+        DeviceInfoDivider()
+        DeviceInfoRow(
+            label = "WiFi thiết bị:",
+            value = wifiSignal?.let { "$it%" } ?: "N/A"
+        )
+
+        DeviceInfoDivider()
+        val presetValueColor = if (stats.error == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error
+        DeviceInfoRow(
+            label = "Logo/ảnh:",
+            value = when {
+                stats.isLoading -> "Đang đọc..."
+                stats.error != null -> "Lỗi đọc"
+                else -> "${stats.logoUsed} preset"
+            },
+            valueColor = presetValueColor
+        )
+        DeviceInfoDivider()
+        DeviceInfoRow(
+            label = "Preset timecode:",
+            value = when {
+                stats.isLoading -> "Đang đọc..."
+                stats.error != null -> "Lỗi đọc"
+                else -> "${stats.timecodeUsed}/${stats.timecodeCapacity} slot"
+            },
+            valueColor = presetValueColor
+        )
+        DeviceInfoDivider()
+        DeviceInfoRow(
+            label = "Preset hệ thống:",
+            value = when {
+                stats.isLoading -> "Đang đọc..."
+                stats.error != null -> "Lỗi đọc"
+                else -> "${stats.systemUsed}/${stats.systemCapacity} slot"
+            },
+            valueColor = presetValueColor
+        )
+        if (!stats.isLoading && stats.error == null && stats.otherUsed > 0) {
+            DeviceInfoDivider()
+            DeviceInfoRow(label = "Preset khác:", value = "${stats.otherUsed} preset")
+        }
+        PresetCapacityWarningCard(
+            stats = stats,
+            deviceName = null,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (stats.error != null) {
+            Text(
+                text = stats.error,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.End,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+private fun PresetCapacityWarningCard(
+    stats: DevicePresetStorageStats,
+    deviceName: String?,
+    modifier: Modifier = Modifier
+) {
+    val warnings = presetCapacityWarnings(stats)
+    if (warnings.isEmpty()) return
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.10f))
+            .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.30f), RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Warning,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(18.dp)
+        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                text = if (deviceName == null) "CẢNH BÁO PRESET GẦN ĐẦY" else "$deviceName gần đầy preset",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Black,
+                color = MaterialTheme.colorScheme.error
+            )
+            warnings.forEach { warning ->
+                Text(
+                    text = warning,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetCleanupPanel(
+    stats: DevicePresetStorageStats,
+    isBusy: Boolean,
+    onAction: (PresetDeleteAction) -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.22f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "DỌN PRESET AN TOÀN",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            Text(
+                text = "Logo/ảnh ${stats.logoUsed} preset · Timecode ${stats.timecodeUsed}/${stats.timecodeCapacity} slot · Hệ thống ${stats.systemUsed}/${stats.systemCapacity} slot",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                PresetDeleteActionButton(
+                    title = "XÓA ALL PRESET LOGO/ẢNH",
+                    subtitle = "Slot 1-59, chỉ xóa file ảnh không còn preset khác dùng",
+                    enabled = !isBusy,
+                    onClick = { onAction(PresetDeleteAction.LOGO_IMAGES) }
+                )
+                PresetDeleteActionButton(
+                    title = "XÓA ALL PRESET THUỘC NHÓM PRESET",
+                    subtitle = "Slot 60-240 và playlist 249, bỏ qua slot được giữ",
+                    enabled = !isBusy,
+                    onClick = { onAction(PresetDeleteAction.TIMECODE_GROUP) }
+                )
+                PresetDeleteActionButton(
+                    title = "XÓA ALL PRESET TRỪ HỆ THỐNG",
+                    subtitle = "Giữ slot 100, 248, 250; cho phép xóa playlist 249",
+                    enabled = !isBusy,
+                    onClick = { onAction(PresetDeleteAction.ALL_EXCEPT_SYSTEM) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BulkPresetCleanupPanel(
+    devices: List<WledDevice>,
+    onlineStats: Map<Int, DevicePresetStorageStats>,
+    isBusy: Boolean,
+    onRefresh: () -> Unit,
+    onAction: (PresetDeleteAction) -> Unit
+) {
+    val onlineDevices = devices.filter { it.isOnline }
+    val warningDevices = onlineDevices.mapNotNull { device ->
+        val stats = onlineStats[device.id]
+        if (stats != null && presetCapacityWarnings(stats).isNotEmpty()) device to stats else null
+    }
+
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.22f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "DỌN PRESET AN TOÀN TẤT CẢ ONLINE",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = "${onlineDevices.size} thiết bị online",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+                    )
+                }
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !isBusy,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Tải lại thống kê preset", modifier = Modifier.size(18.dp))
+                }
+            }
+
+            if (warningDevices.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    warningDevices.take(4).forEach { (device, stats) ->
+                        PresetCapacityWarningCard(
+                            stats = stats,
+                            deviceName = device.name,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    if (warningDevices.size > 4) {
+                        Text(
+                            text = "Còn ${warningDevices.size - 4} thiết bị khác cũng vượt ngưỡng 90%.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            val totalLogo = onlineDevices.sumOf { onlineStats[it.id]?.logoUsed ?: 0 }
+            val totalTimecode = onlineDevices.sumOf { onlineStats[it.id]?.timecodeUsed ?: 0 }
+            Text(
+                text = "Tổng online: Logo/ảnh $totalLogo preset · Timecode $totalTimecode slot",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                PresetDeleteActionButton(
+                    title = "XÓA LOGO/ẢNH TRÊN TẤT CẢ ONLINE",
+                    subtitle = "Mỗi mạch xóa slot 1-59 và file ảnh không còn dùng chung",
+                    enabled = !isBusy && onlineDevices.isNotEmpty(),
+                    onClick = { onAction(PresetDeleteAction.LOGO_IMAGES) }
+                )
+                PresetDeleteActionButton(
+                    title = "XÓA NHÓM PRESET TRÊN TẤT CẢ ONLINE",
+                    subtitle = "Mỗi mạch xóa slot 60-240 và playlist 249",
+                    enabled = !isBusy && onlineDevices.isNotEmpty(),
+                    onClick = { onAction(PresetDeleteAction.TIMECODE_GROUP) }
+                )
+                PresetDeleteActionButton(
+                    title = "XÓA ALL PRESET ONLINE TRỪ HỆ THỐNG",
+                    subtitle = "Giữ slot 100, 248, 250; cho phép xóa playlist 249",
+                    enabled = !isBusy && onlineDevices.isNotEmpty(),
+                    onClick = { onAction(PresetDeleteAction.ALL_EXCEPT_SYSTEM) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetDeleteActionButton(
+    title: String,
+    subtitle: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 58.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Delete,
+            contentDescription = null,
+            tint = if (enabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Black,
+                color = if (enabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 0.58f else 0.38f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun PresetDeleteDialog(
+    state: PresetDeleteUiState,
+    onConfirm: (PresetDeletePreview) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val hasContent = state.isPreparing || state.isDeleting || state.preview != null ||
+        state.resultMessage != null || state.error != null
+    if (!hasContent) return
+
+    Dialog(onDismissRequest = { if (!state.isPreparing && !state.isDeleting) onDismiss() }) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                when {
+                    state.isPreparing || state.isDeleting -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                            Column {
+                                Text(
+                                    text = if (state.isDeleting) "ĐANG XÓA PRESET" else "ĐANG KIỂM TRA PRESET",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = if (state.isDeleting) "App đang xóa tuần tự và refresh lại bộ nhớ." else "App đang đọc presets.json mới nhất để tính số preset và file ảnh.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                                )
+                            }
+                        }
+                    }
+
+                    state.preview != null -> {
+                        val preview = state.preview
+                        val canDelete = preview.presetIds.isNotEmpty() || preview.fileRefs.isNotEmpty()
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = presetDeleteTitle(preview.action),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Text(
+                                    text = "${preview.deviceName} · ${preview.deviceIp}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider()
+
+                        DeviceInfoRow("Preset sẽ xóa:", "${preview.presetIds.size} slot")
+                        DeviceInfoRow("File ảnh sẽ xóa:", "${preview.fileRefs.size} file")
+                        DeviceInfoRow("Slot được giữ:", preview.protectedSlots.joinToString(", "))
+                        if (preview.presetIds.isNotEmpty()) {
+                            Text(
+                                text = "Slot mục tiêu: ${summarizePresetIds(preview.presetIds)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+                            )
+                        }
+                        Text(
+                            text = presetDeleteSafetyNote(preview.action),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+
+                        HorizontalDivider()
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = onDismiss) {
+                                Text("Hủy")
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Button(
+                                onClick = { onConfirm(preview) },
+                                enabled = canDelete,
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (canDelete) "Xóa ngay" else "Không có gì để xóa")
+                            }
+                        }
+                    }
+
+                    else -> {
+                        val isError = state.error != null
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isError) Icons.Default.Warning else Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = if (isError) MaterialTheme.colorScheme.error else Color(0xFF00A86B)
+                            )
+                            Text(
+                                text = if (isError) "THAO TÁC THẤT BẠI" else "ĐÃ DỌN PRESET",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                        Text(
+                            text = state.error ?: state.resultMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            Button(onClick = onDismiss) {
+                                Text("Đã hiểu")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetBulkDeleteDialog(
+    state: PresetBulkDeleteUiState,
+    onConfirm: (PresetBulkDeletePreview) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val hasContent = state.isPreparing || state.isDeleting || state.preview != null ||
+        state.resultMessage != null || state.error != null
+    if (!hasContent) return
+
+    Dialog(onDismissRequest = { if (!state.isPreparing && !state.isDeleting) onDismiss() }) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                when {
+                    state.isPreparing || state.isDeleting -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                            Column {
+                                Text(
+                                    text = if (state.isDeleting) "ĐANG XÓA PRESET ONLINE" else "ĐANG KIỂM TRA THIẾT BỊ ONLINE",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = if (state.isDeleting) "App đang xóa tuần tự trên từng thiết bị online." else "App đang đọc presets.json mới nhất trên từng mạch.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                                )
+                            }
+                        }
+                    }
+
+                    state.preview != null -> {
+                        val preview = state.preview
+                        val totalPresets = preview.devicePreviews.sumOf { it.presetIds.size }
+                        val totalFiles = preview.devicePreviews.sumOf { it.fileRefs.size }
+                        val canDelete = totalPresets > 0 || totalFiles > 0
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = presetDeleteTitle(preview.action),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Text(
+                                    text = "Áp dụng cho ${preview.devicePreviews.size} thiết bị online đã đọc được",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider()
+                        DeviceInfoRow("Tổng preset sẽ xóa:", "$totalPresets slot")
+                        DeviceInfoRow("Tổng file ảnh sẽ xóa:", "$totalFiles file")
+                        DeviceInfoRow("Thiết bị lỗi khi kiểm tra:", "${preview.errors.size}")
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 220.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            preview.devicePreviews.forEach { item ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
+                                        .padding(10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(item.deviceName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            item.deviceIp,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f)
+                                        )
+                                    }
+                                    Text(
+                                        text = "${item.presetIds.size} preset · ${item.fileRefs.size} file",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Black,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                            PresetDeviceErrorList(preview.errors)
+                        }
+
+                        Text(
+                            text = "Slot 100, 248, 250 luôn được giữ; playlist 249 sẽ bị xóa nếu nằm trong nhóm mục tiêu.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+
+                        HorizontalDivider()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = onDismiss) { Text("Hủy") }
+                            Spacer(Modifier.width(8.dp))
+                            Button(
+                                onClick = { onConfirm(preview) },
+                                enabled = canDelete,
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (canDelete) "Xóa tất cả online" else "Không có gì để xóa")
+                            }
+                        }
+                    }
+
+                    else -> {
+                        val isError = state.error != null
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isError) Icons.Default.Warning else Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = if (isError) MaterialTheme.colorScheme.error else Color(0xFF00A86B)
+                            )
+                            Text(
+                                text = if (isError) "THAO TÁC THẤT BẠI" else "ĐÃ DỌN PRESET ONLINE",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                        Text(
+                            text = state.error ?: state.resultMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                        )
+                        PresetDeviceErrorList(state.resultErrors)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            Button(onClick = onDismiss) { Text("Đã hiểu") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetDeviceErrorList(errors: List<PresetDeviceDeleteError>) {
+    if (errors.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        errors.take(5).forEach { error ->
+            Text(
+                text = "${error.deviceName} (${error.deviceIp}): ${error.message}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        if (errors.size > 5) {
+            Text(
+                text = "Còn ${errors.size - 5} lỗi khác.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+private fun formatDeviceBytes(bytes: Long?): String {
+    if (bytes == null) return "N/A"
+    val kb = bytes / 1024.0
+    return if (kb < 1024.0) {
+        String.format(Locale.US, "%.0f KB", kb)
+    } else {
+        String.format(Locale.US, "%.1f MB", kb / 1024.0)
+    }
+}
+
+private fun storageStatusText(percent: Int): String {
+    return when {
+        percent < 70 -> "Còn tốt"
+        percent < 85 -> "Gần đầy"
+        else -> "Cần dọn bộ nhớ"
+    }
+}
+
+private fun presetCapacityWarnings(stats: DevicePresetStorageStats): List<String> {
+    if (stats.isLoading || stats.error != null) return emptyList()
+    val warnings = mutableListOf<String>()
+    val logoPercent = percentOf(stats.logoUsed, stats.logoCapacity)
+    val timecodePercent = percentOf(stats.timecodeUsed, stats.timecodeCapacity)
+    if (logoPercent >= 90) {
+        warnings += "Logo/ảnh đã dùng ${stats.logoUsed}/${stats.logoCapacity} slot ($logoPercent%)."
+    }
+    if (timecodePercent >= 90) {
+        warnings += "Timecode đã dùng ${stats.timecodeUsed}/${stats.timecodeCapacity} slot ($timecodePercent%)."
+    }
+    return warnings
+}
+
+private fun percentOf(used: Int, capacity: Int): Int {
+    if (capacity <= 0) return 0
+    return ((used * 100f) / capacity).toInt()
+}
+
+private fun presetDeleteTitle(action: PresetDeleteAction): String {
+    return when (action) {
+        PresetDeleteAction.LOGO_IMAGES -> "XÓA ALL PRESET LOGO/ẢNH"
+        PresetDeleteAction.TIMECODE_GROUP -> "XÓA ALL PRESET THUỘC NHÓM PRESET"
+        PresetDeleteAction.ALL_EXCEPT_SYSTEM -> "XÓA ALL PRESET TRỪ HỆ THỐNG"
+    }
+}
+
+private fun presetDeleteSafetyNote(action: PresetDeleteAction): String {
+    return when (action) {
+        PresetDeleteAction.LOGO_IMAGES -> "Chỉ xóa slot 1-59 và file ảnh được nhóm này tham chiếu nếu không còn preset khác dùng."
+        PresetDeleteAction.TIMECODE_GROUP -> "Xóa slot 60-240 và playlist 249; file ảnh dùng chung sẽ được giữ lại."
+        PresetDeleteAction.ALL_EXCEPT_SYSTEM -> "Xóa mọi preset thường, cho phép xóa playlist 249, nhưng giữ slot 100, 248, 250 và file ảnh còn được slot được giữ tham chiếu."
+    }
+}
+
+private fun summarizePresetIds(ids: List<Int>): String {
+    if (ids.isEmpty()) return "Không có"
+    if (ids.size <= 18) return ids.joinToString(", ")
+    return ids.take(18).joinToString(", ") + "..."
 }
 
 private fun WledInfo.veriInfo(): String {
@@ -4369,7 +5388,7 @@ fun TimecodeResultDialog(
                     ) {
                         Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                         Text(
-                            text = "Nhấn \"CHẠY PLAYLIST TỔNG CHOREOGRAPHY\" để bắt đầu trình diễn đồng loạt.",
+                            text = "Timeline biên đạo đã được reload tự động từ playlist 249. Nhấn \"CHẠY PLAYLIST TỔNG CHOREOGRAPHY\" để bắt đầu trình diễn đồng loạt.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
                         )
@@ -4403,6 +5422,7 @@ fun NeonActionButton(
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(16.dp)
+    val buttonHeight = LocalAppDimens.current.buttonHeight
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
 
@@ -4417,7 +5437,7 @@ fun NeonActionButton(
     Box(
         modifier = modifier
             .scale(scale)
-            .height(54.dp)
+            .height(buttonHeight)
             .shadow(elevation = glow, shape = shape, spotColor = neonColor, ambientColor = neonColor)
             .clip(shape)
             // 1) Dark glass body

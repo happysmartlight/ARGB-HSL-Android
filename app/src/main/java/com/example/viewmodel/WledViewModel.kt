@@ -191,6 +191,18 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeDeviceDetails = MutableStateFlow<WledResponse?>(null)
     val activeDeviceDetails: StateFlow<WledResponse?> = _activeDeviceDetails.asStateFlow()
 
+    private val _activeDevicePresetStats = MutableStateFlow(DevicePresetStorageStats())
+    val activeDevicePresetStats: StateFlow<DevicePresetStorageStats> = _activeDevicePresetStats.asStateFlow()
+
+    private val _presetDeleteState = MutableStateFlow(PresetDeleteUiState())
+    val presetDeleteState: StateFlow<PresetDeleteUiState> = _presetDeleteState.asStateFlow()
+
+    private val _bulkPresetDeleteState = MutableStateFlow(PresetBulkDeleteUiState())
+    val bulkPresetDeleteState: StateFlow<PresetBulkDeleteUiState> = _bulkPresetDeleteState.asStateFlow()
+
+    private val _onlineDevicePresetStats = MutableStateFlow<Map<Int, DevicePresetStorageStats>>(emptyMap())
+    val onlineDevicePresetStats: StateFlow<Map<Int, DevicePresetStorageStats>> = _onlineDevicePresetStats.asStateFlow()
+
     init {
         // Start background polling to check online status
         startPolling()
@@ -256,6 +268,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     fun selectDevice(device: WledDevice?) {
         _selectedDevice.value = device
         _activeDeviceDetails.value = null
+        _activeDevicePresetStats.value = DevicePresetStorageStats()
+        _presetDeleteState.value = PresetDeleteUiState()
+        _bulkPresetDeleteState.value = PresetBulkDeleteUiState()
         if (device != null) {
             viewModelScope.launch {
                 // Ping to update latest state
@@ -264,10 +279,11 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                     _selectedDevice.value = updated
                 }
                 // Fetch complete details if possible
-                val details = repository.fetchDeviceDetails(device)
+                val details = repository.fetchDeviceDetails(updated)
                 if (details != null && _selectedDevice.value?.id == device.id) {
                     _activeDeviceDetails.value = details
                 }
+                refreshPresetStatsForDevice(updated)
             }
         }
     }
@@ -346,6 +362,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                     _selectedDevice.value = updated
                     val details = repository.fetchDeviceDetails(updated)
                     _activeDeviceDetails.value = details
+                    refreshPresetStatsForDevice(updated)
                 }
             }
             _isRefreshing.value = false
@@ -417,6 +434,388 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         _selectedDevice.value?.let { current ->
             val updated = transformer(current)
             _selectedDevice.value = updated
+        }
+    }
+
+    fun refreshActiveDeviceMemoryAndPresetStats(device: WledDevice? = _selectedDevice.value) {
+        if (device == null) return
+        viewModelScope.launch {
+            val details = repository.fetchDeviceDetails(device)
+            if (_selectedDevice.value?.id == device.id) {
+                _activeDeviceDetails.value = details
+            }
+            refreshPresetStatsForDevice(device)
+        }
+    }
+
+    fun refreshOnlineDevicePresetStats() {
+        viewModelScope.launch {
+            val onlineDevices = devices.value.filter { it.isOnline }
+            if (onlineDevices.isEmpty()) {
+                _onlineDevicePresetStats.value = emptyMap()
+                return@launch
+            }
+
+            _onlineDevicePresetStats.value = onlineDevices.associate { device ->
+                device.id to DevicePresetStorageStats(deviceId = device.id, isLoading = true)
+            }
+
+            val updatedStats = mutableMapOf<Int, DevicePresetStorageStats>()
+            for (device in onlineDevices) {
+                val stats = try {
+                    val presets = fetchPresetsJsonObject(device.ipAddress)
+                    buildPresetStats(device.id, presets)
+                } catch (e: Exception) {
+                    android.util.Log.e("WledViewModel", "Error fetching online preset stats", e)
+                    DevicePresetStorageStats(
+                        deviceId = device.id,
+                        error = e.message ?: "Không đọc được presets.json"
+                    )
+                }
+                updatedStats[device.id] = stats
+                _onlineDevicePresetStats.value = _onlineDevicePresetStats.value + (device.id to stats)
+            }
+        }
+    }
+
+    fun preparePresetDeletion(device: WledDevice, action: PresetDeleteAction) {
+        if (!device.isOnline) {
+            _presetDeleteState.value = PresetDeleteUiState(error = "Thiết bị ${device.name} đang ngoại tuyến.")
+            return
+        }
+        viewModelScope.launch {
+            _presetDeleteState.value = PresetDeleteUiState(isPreparing = true)
+            try {
+                val presets = fetchPresetsJsonObject(device.ipAddress)
+                val preview = buildPresetDeletionPreview(device, action, presets)
+                _presetDeleteState.value = PresetDeleteUiState(preview = preview)
+            } catch (e: Exception) {
+                android.util.Log.e("WledViewModel", "Error preparing preset deletion", e)
+                _presetDeleteState.value = PresetDeleteUiState(
+                    error = "Không đọc được presets.json từ ${device.name}: ${e.message ?: "lỗi không xác định"}"
+                )
+            }
+        }
+    }
+
+    fun confirmPresetDeletion(device: WledDevice, action: PresetDeleteAction) {
+        viewModelScope.launch {
+            val currentPreview = _presetDeleteState.value.preview
+            _presetDeleteState.value = PresetDeleteUiState(isDeleting = true, preview = currentPreview)
+            try {
+                val result = deletePresetGroupOnDevice(device, action)
+                val details = repository.fetchDeviceDetails(device)
+                if (_selectedDevice.value?.id == device.id) {
+                    _activeDeviceDetails.value = details
+                }
+                refreshPresetStatsForDevice(device)
+                _presetDeleteState.value = PresetDeleteUiState(
+                    resultMessage = "Đã xóa ${result.presetIds.size} preset và ${result.fileRefs.size} file ảnh trên ${device.name}."
+                )
+                log(
+                    "Preset: ${presetDeleteActionLogName(action)} trên ${device.name} - xóa ${result.presetIds.size} preset, ${result.fileRefs.size} file ảnh.",
+                    "WARN"
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("WledViewModel", "Error deleting preset group", e)
+                _presetDeleteState.value = PresetDeleteUiState(
+                    error = "Xóa preset thất bại trên ${device.name}: ${e.message ?: "lỗi không xác định"}"
+                )
+                log("Preset: lỗi xóa trên ${device.name} - ${e.message}", "ERROR")
+            }
+        }
+    }
+
+    fun preparePresetDeletionForOnlineDevices(action: PresetDeleteAction) {
+        val onlineDevices = devices.value.filter { it.isOnline }
+        if (onlineDevices.isEmpty()) {
+            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(error = "Không có thiết bị online để dọn preset.")
+            return
+        }
+
+        viewModelScope.launch {
+            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(isPreparing = true)
+            val previews = mutableListOf<PresetDeletePreview>()
+            val errors = mutableListOf<PresetDeviceDeleteError>()
+
+            for (device in onlineDevices) {
+                try {
+                    val presets = fetchPresetsJsonObject(device.ipAddress)
+                    previews += buildPresetDeletionPreview(device, action, presets)
+                } catch (e: Exception) {
+                    android.util.Log.e("WledViewModel", "Error preparing bulk preset deletion", e)
+                    errors += PresetDeviceDeleteError(
+                        deviceName = device.name,
+                        deviceIp = device.ipAddress,
+                        message = e.message ?: "lỗi không xác định"
+                    )
+                }
+            }
+
+            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(
+                preview = PresetBulkDeletePreview(
+                    action = action,
+                    devicePreviews = previews,
+                    errors = errors
+                )
+            )
+        }
+    }
+
+    fun confirmPresetDeletionForOnlineDevices(action: PresetDeleteAction) {
+        viewModelScope.launch {
+            val currentPreview = _bulkPresetDeleteState.value.preview
+            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(isDeleting = true, preview = currentPreview)
+
+            val targetPreviews = currentPreview?.devicePreviews.orEmpty()
+            if (targetPreviews.isEmpty()) {
+                _bulkPresetDeleteState.value = PresetBulkDeleteUiState(error = "Không có thiết bị nào đã sẵn sàng để xóa.")
+                return@launch
+            }
+
+            var successCount = 0
+            var totalPresetDeleted = 0
+            var totalFileDeleted = 0
+            val errors = currentPreview?.errors?.toMutableList() ?: mutableListOf()
+
+            for (preview in targetPreviews) {
+                val device = devices.value.find { it.id == preview.deviceId || it.ipAddress == preview.deviceIp }
+                    ?: WledDevice(
+                        id = preview.deviceId,
+                        name = preview.deviceName,
+                        ipAddress = preview.deviceIp,
+                        isOnline = true
+                    )
+                try {
+                    val result = deletePresetGroupOnDevice(device, action)
+                    successCount++
+                    totalPresetDeleted += result.presetIds.size
+                    totalFileDeleted += result.fileRefs.size
+                    log(
+                        "Preset ALL: ${presetDeleteActionLogName(action)} trên ${device.name} - xóa ${result.presetIds.size} preset, ${result.fileRefs.size} file ảnh.",
+                        "WARN"
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("WledViewModel", "Error deleting bulk preset group", e)
+                    errors += PresetDeviceDeleteError(
+                        deviceName = device.name,
+                        deviceIp = device.ipAddress,
+                        message = e.message ?: "lỗi không xác định"
+                    )
+                    log("Preset ALL: lỗi xóa trên ${device.name} - ${e.message}", "ERROR")
+                }
+            }
+
+            _selectedDevice.value?.let { selected ->
+                val details = repository.fetchDeviceDetails(selected)
+                if (_selectedDevice.value?.id == selected.id) {
+                    _activeDeviceDetails.value = details
+                }
+                refreshPresetStatsForDevice(selected)
+            }
+            refreshOnlineDevicePresetStats()
+
+            val errorText = if (errors.isEmpty()) {
+                ""
+            } else {
+                " Có ${errors.size} thiết bị lỗi."
+            }
+            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(
+                resultMessage = "Đã dọn $successCount/${targetPreviews.size} thiết bị online, xóa $totalPresetDeleted preset và $totalFileDeleted file ảnh.$errorText",
+                resultErrors = errors
+            )
+        }
+    }
+
+    fun dismissPresetDeletionDialog() {
+        val state = _presetDeleteState.value
+        if (!state.isPreparing && !state.isDeleting) {
+            _presetDeleteState.value = PresetDeleteUiState()
+        }
+    }
+
+    fun dismissBulkPresetDeletionDialog() {
+        val state = _bulkPresetDeleteState.value
+        if (!state.isPreparing && !state.isDeleting) {
+            _bulkPresetDeleteState.value = PresetBulkDeleteUiState()
+        }
+    }
+
+    private suspend fun refreshPresetStatsForDevice(device: WledDevice) {
+        if (_selectedDevice.value?.id != device.id) return
+        if (!device.isOnline) {
+            _activeDevicePresetStats.value = DevicePresetStorageStats(deviceId = device.id)
+            return
+        }
+
+        _activeDevicePresetStats.value = DevicePresetStorageStats(deviceId = device.id, isLoading = true)
+        try {
+            val presets = fetchPresetsJsonObject(device.ipAddress)
+            val stats = buildPresetStats(device.id, presets)
+            if (_selectedDevice.value?.id == device.id) {
+                _activeDevicePresetStats.value = stats
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("WledViewModel", "Error fetching preset stats", e)
+            if (_selectedDevice.value?.id == device.id) {
+                _activeDevicePresetStats.value = DevicePresetStorageStats(
+                    deviceId = device.id,
+                    error = e.message ?: "Không đọc được presets.json"
+                )
+            }
+        }
+    }
+
+    private fun buildPresetStats(deviceId: Int, presets: org.json.JSONObject): DevicePresetStorageStats {
+        val ids = activePresetIds(presets)
+        return DevicePresetStorageStats(
+            deviceId = deviceId,
+            logoUsed = ids.count { it in logoPresetRange },
+            logoCapacity = logoPresetRange.count(),
+            timecodeUsed = ids.count { it in timecodePresetRange && it !in timecodeAllocationSkipSlots },
+            timecodeCapacity = timecodeSlotCapacity,
+            systemUsed = ids.count { it in systemPresetSlots },
+            systemCapacity = systemPresetSlots.size,
+            otherUsed = ids.count { it !in logoPresetRange && it !in timecodePresetRange && it !in systemPresetSlots },
+            totalPresets = ids.size
+        )
+    }
+
+    private suspend fun deletePresetGroupOnDevice(
+        device: WledDevice,
+        action: PresetDeleteAction
+    ): PresetDeletePreview = withContext(Dispatchers.IO) {
+        val presets = fetchPresetsJsonObject(device.ipAddress)
+        val plan = buildPresetDeletionPreview(device, action, presets)
+        if (plan.presetIds.isEmpty() && plan.fileRefs.isEmpty()) {
+            return@withContext plan
+        }
+
+        safeState(device.ipAddress)
+        for (pid in plan.presetIds) {
+            deletePresetSlot(device.ipAddress, pid)
+            delay(200)
+        }
+        for (path in plan.fileRefs) {
+            deleteDeviceFile(device.ipAddress, path)
+            delay(200)
+        }
+        plan
+    }
+
+    private fun buildPresetDeletionPreview(
+        device: WledDevice,
+        action: PresetDeleteAction,
+        presets: org.json.JSONObject
+    ): PresetDeletePreview {
+        val targetIds = activePresetIds(presets)
+            .filter { pid -> isPresetTargetForAction(pid, action) }
+            .sorted()
+        val targetIdSet = targetIds.toSet()
+        val targetRefs = mutableSetOf<String>()
+        val remainingRefs = mutableSetOf<String>()
+
+        val keys = presets.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val pid = key.toIntOrNull() ?: continue
+            val preset = presets.optJSONObject(key) ?: continue
+            if (preset.length() == 0) continue
+
+            val refs = extractPresetFileRefs(preset)
+            if (pid in targetIdSet) {
+                targetRefs += refs
+            } else {
+                remainingRefs += refs
+            }
+        }
+
+        return PresetDeletePreview(
+            deviceId = device.id,
+            deviceName = device.name,
+            deviceIp = device.ipAddress,
+            action = action,
+            presetIds = targetIds,
+            fileRefs = (targetRefs - remainingRefs).sorted(),
+            protectedSlots = protectedPresetSlots.sorted()
+        )
+    }
+
+    private fun activePresetIds(presets: org.json.JSONObject): List<Int> {
+        val ids = mutableListOf<Int>()
+        val keys = presets.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val pid = key.toIntOrNull() ?: continue
+            if (isUsablePresetValue(presets.opt(key))) {
+                ids += pid
+            }
+        }
+        return ids
+    }
+
+    private fun isUsablePresetValue(value: Any?): Boolean {
+        if (value == null || value == org.json.JSONObject.NULL) return false
+        return value !is org.json.JSONObject || value.length() > 0
+    }
+
+    private fun isPresetTargetForAction(pid: Int, action: PresetDeleteAction): Boolean {
+        return when (action) {
+            PresetDeleteAction.LOGO_IMAGES -> pid in logoPresetRange
+            PresetDeleteAction.TIMECODE_GROUP -> (pid in timecodePresetRange && pid !in timecodeAllocationSkipSlots) || pid == playlistPresetSlot
+            PresetDeleteAction.ALL_EXCEPT_SYSTEM -> pid !in protectedPresetSlots
+        }
+    }
+
+    private fun extractPresetFileRefs(preset: org.json.JSONObject): Set<String> {
+        val refs = mutableSetOf<String>()
+        val segments = preset.optJSONArray("seg") ?: return refs
+        for (i in 0 until segments.length()) {
+            val segment = segments.optJSONObject(i) ?: continue
+            val raw = segment.optString("n", "").trim()
+            if (raw.isBlank()) continue
+            val path = if (raw.startsWith("/")) raw else "/$raw"
+            val lower = path.lowercase()
+            if (imageFileExtensions.any { lower.endsWith(it) }) {
+                refs += path
+            }
+        }
+        return refs
+    }
+
+    private suspend fun safeState(ip: String) {
+        val url = "http://$ip/json/state"
+        api.updateState(url, WledStateRequest(ps = 0))
+        delay(100)
+        api.updateState(url, WledStateRequest(on = false))
+        delay(100)
+    }
+
+    private suspend fun deletePresetSlot(ip: String, pid: Int) {
+        api.updateState("http://$ip/json/state", WledStateRequest(pdel = pid))
+    }
+
+    private fun deleteDeviceFile(ip: String, path: String) {
+        val normalized = if (path.startsWith("/")) path else "/$path"
+        val encodedPath = java.net.URLEncoder.encode(normalized, "UTF-8")
+        val request = okhttp3.Request.Builder()
+            .url("http://$ip/edit?func=delete&path=$encodedPath")
+            .build()
+        presetFileClient.newCall(request).execute().use { response ->
+            if (response.code == 401) {
+                throw Exception("WLED đang khóa PIN phần /edit, cần mở khóa trước khi xóa file $normalized.")
+            }
+            if (!response.isSuccessful) {
+                throw Exception("Không xóa được file $normalized (HTTP ${response.code})")
+            }
+        }
+    }
+
+    private fun presetDeleteActionLogName(action: PresetDeleteAction): String {
+        return when (action) {
+            PresetDeleteAction.LOGO_IMAGES -> "xóa nhóm logo/ảnh"
+            PresetDeleteAction.TIMECODE_GROUP -> "xóa nhóm preset timecode"
+            PresetDeleteAction.ALL_EXCEPT_SYSTEM -> "xóa tất cả preset trừ hệ thống"
         }
     }
 
@@ -1271,8 +1670,21 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     // TIMECODE IMPORT & UPLOAD (mock -> real device mapping flow)
     // ============================================================
 
-    // Reserved slots per the integration guide — never allocate these for baking.
-    private val timecodeSkipSlots = setOf(100, 248, 249, 250)
+    // 249 is a fixed playlist slot, but user-requested preset cleanup is allowed to delete it.
+    private val systemPresetSlots = setOf(100, 248, 249, 250)
+    private val protectedPresetSlots = setOf(100, 248, 250)
+    private val playlistPresetSlot = 249
+    private val logoPresetRange = 1..59
+    private val timecodePresetRange = 60..240
+    private val timecodeAllocationSkipSlots = systemPresetSlots
+    private val timecodeSlotCapacity = timecodePresetRange.count { it !in timecodeAllocationSkipSlots }
+    private val imageFileExtensions = setOf(".gif", ".bmp", ".png", ".jpg", ".jpeg")
+    private val presetFileClient = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
+    private val timecodeSkipSlots = timecodeAllocationSkipSlots
     private val timecodeSlotRange = 60..240
     private val timecodeGapTolerance = 0.05
 
@@ -1288,7 +1700,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun prepareTimecodeImport(jsonString: String) {
         try {
-            val config = org.json.JSONObject(jsonString)
+            val config = TimecodeCrypto.decryptTimecode(jsonString)
             val version = config.optInt("version", 1)
             if (version > 1) {
                 _timecodeImportState.value = TimecodeImportUiState(
@@ -1349,6 +1761,12 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 showDialog = true,
                 mockDevices = mockDevices
             )
+        } catch (e: TimecodeCryptoException) {
+            android.util.Log.e("WledViewModel", "Error decrypting timecode", e)
+            _timecodeImportState.value = TimecodeImportUiState(
+                resultMessage = "File timecode không đúng định dạng HSL đã mã hóa hoặc đã bị chỉnh sửa.\n${e.message}"
+            )
+            pendingTimecodeConfig = null
         } catch (e: Exception) {
             android.util.Log.e("WledViewModel", "Error parsing timecode", e)
             _timecodeImportState.value = TimecodeImportUiState(
@@ -1454,6 +1872,13 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 showResult = true,
                 totalSeconds = timelineSeconds
             )
+
+            if (results.any { it.success }) {
+                delay(500)
+                fetchTimelinesForAllDevices(playlistPresetSlot)
+                refreshOnlineDevicePresetStats()
+                log("Timecode: đã tự động reload timeline biên đạo playlist $playlistPresetSlot sau khi import.", "INFO")
+            }
         }
     }
 
@@ -1702,6 +2127,65 @@ data class TimecodeImportUiState(
     val showResult: Boolean = false,
     val results: List<TimecodeUploadResult> = emptyList(),
     val totalSeconds: Double = 0.0
+)
+
+enum class PresetDeleteAction {
+    LOGO_IMAGES,
+    TIMECODE_GROUP,
+    ALL_EXCEPT_SYSTEM
+}
+
+data class DevicePresetStorageStats(
+    val deviceId: Int = 0,
+    val logoUsed: Int = 0,
+    val logoCapacity: Int = 59,
+    val timecodeUsed: Int = 0,
+    val timecodeCapacity: Int = 180,
+    val systemUsed: Int = 0,
+    val systemCapacity: Int = 4,
+    val otherUsed: Int = 0,
+    val totalPresets: Int = 0,
+    val isLoading: Boolean = false,
+    val error: String? = null
+)
+
+data class PresetDeletePreview(
+    val deviceId: Int,
+    val deviceName: String,
+    val deviceIp: String,
+    val action: PresetDeleteAction,
+    val presetIds: List<Int>,
+    val fileRefs: List<String>,
+    val protectedSlots: List<Int>
+)
+
+data class PresetDeleteUiState(
+    val isPreparing: Boolean = false,
+    val isDeleting: Boolean = false,
+    val preview: PresetDeletePreview? = null,
+    val resultMessage: String? = null,
+    val error: String? = null
+)
+
+data class PresetDeviceDeleteError(
+    val deviceName: String,
+    val deviceIp: String,
+    val message: String
+)
+
+data class PresetBulkDeletePreview(
+    val action: PresetDeleteAction,
+    val devicePreviews: List<PresetDeletePreview>,
+    val errors: List<PresetDeviceDeleteError> = emptyList()
+)
+
+data class PresetBulkDeleteUiState(
+    val isPreparing: Boolean = false,
+    val isDeleting: Boolean = false,
+    val preview: PresetBulkDeletePreview? = null,
+    val resultMessage: String? = null,
+    val resultErrors: List<PresetDeviceDeleteError> = emptyList(),
+    val error: String? = null
 )
 
 data class DevicePlaylistStep(
