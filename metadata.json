@@ -1,0 +1,6 @@
+{
+  "name": "ARGB HSL",
+  "description": "Ứng dụng quản lý và điều khiển các thiết bị LED ARGB dựa trên framework WLED.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

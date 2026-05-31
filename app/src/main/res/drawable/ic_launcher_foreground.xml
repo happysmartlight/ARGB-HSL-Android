@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 1. Soft Dynamic Shadows underneath the main elements for visual depth -->
+    <path
+        android:pathData="M 32.5,74.5 L 32.5,42.5 L 54.0,29.5 L 54.0,47.5"
+        android:strokeWidth="12"
+        android:strokeColor="#300010"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <path
+        android:pathData="M 75.5,37.5 L 75.5,69.5 L 54.0,82.5 L 54.0,64.5"
+        android:strokeWidth="12"
+        android:strokeColor="#001C30"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- 2. Left interlocking ribbon (Neon Magenta/Pink/Violet gradient) -->
+    <path
+        android:pathData="M 32.5,72.5 L 32.5,40.5 L 54.0,27.5 L 54.0,45.5"
+        android:strokeWidth="12"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="32.5"
+                android:startY="72.5"
+                android:endX="54.0"
+                android:endY="27.5"
+                android:type="linear">
+                <item android:color="#F43F5E" android:offset="0.0" /> <!-- Rose 500 -->
+                <item android:color="#D946EF" android:offset="0.5" /> <!-- Magenta/Fuchsia 500 -->
+                <item android:color="#8B5CF6" android:offset="1.0" /> <!-- Violet 500 -->
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 3. Right interlocking ribbon (Neon Electric Blue/Cyan gradient) -->
+    <path
+        android:pathData="M 75.5,35.5 L 75.5,67.5 L 54.0,80.5 L 54.0,62.5"
+        android:strokeWidth="12"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="75.5"
+                android:startY="35.5"
+                android:endX="54.0"
+                android:endY="80.5"
+                android:type="linear">
+                <item android:color="#38BDF8" android:offset="0.0" /> <!-- Light Sky Blue -->
+                <item android:color="#06B6D4" android:offset="0.5" /> <!-- Cyan 500 -->
+                <item android:color="#2563EB" android:offset="1.0" /> <!-- Royal Blue 600 -->
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
