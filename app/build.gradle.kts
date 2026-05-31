@@ -123,9 +123,12 @@ dependencies {
 
 tasks.register("downloadDefaultAudio") {
     val targetFile = File(project.projectDir, "src/main/res/raw/default_audio.mp3")
+    // Chỉ tải khi file chưa tồn tại (file đã được commit vào git). Nhờ vậy build
+    // bình thường không cần internet và không phụ thuộc vào soundhelix.com.
+    onlyIf { !targetFile.exists() }
     doLast {
         targetFile.parentFile.mkdirs()
-        
+
         var currentUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3"
         println("Downloading $currentUrl...")
         

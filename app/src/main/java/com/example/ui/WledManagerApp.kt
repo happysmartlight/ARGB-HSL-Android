@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -28,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -55,6 +58,9 @@ import com.example.viewmodel.WledEffect
 import com.example.viewmodel.WledPalette
 import com.example.viewmodel.WledViewModel
 import com.example.viewmodel.AddDeviceState
+import com.example.viewmodel.TimecodeMockDevice
+import com.example.viewmodel.TimecodeImportUiState
+import com.example.viewmodel.TimecodeUploadResult
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -1035,10 +1041,11 @@ fun DeviceListSection(
             ) {
                 Text(
                     text = "TÌM THẤY TỰ ĐỘNG (${unlinkedDiscoveredDevices.size})",
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = 1.sp,
+                    letterSpacing = 0.5.sp,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
                 TextButton(
@@ -1063,7 +1070,8 @@ fun DeviceListSection(
                         Text(
                             text = "Thêm Tất Cả",
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelMedium,
+                            fontSize = 10.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -1250,14 +1258,22 @@ fun DeviceListSection(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(devices, key = { it.id }) { device ->
-                    val isSelected = selectedDevice?.id == device.id
-                    DeviceRowCard(
-                        device = device,
-                        isSelected = isSelected,
-                        onSelect = { onSelectDevice(device) },
-                        onDelete = { onDeleteDevice(device) },
-                        onTogglePower = { onTogglePower(device, it) }
-                    )
+                    var isVisible by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) { isVisible = true }
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isVisible,
+                        enter = androidx.compose.animation.slideInHorizontally(initialOffsetX = { -100 }) + androidx.compose.animation.fadeIn(),
+                        exit = androidx.compose.animation.slideOutHorizontally(targetOffsetX = { 100 }) + androidx.compose.animation.fadeOut()
+                    ) {
+                        val isSelected = selectedDevice?.id == device.id
+                        DeviceRowCard(
+                            device = device,
+                            isSelected = isSelected,
+                            onSelect = { onSelectDevice(device) },
+                            onDelete = { onDeleteDevice(device) },
+                            onTogglePower = { onTogglePower(device, it) }
+                        )
+                    }
                 }
             }
         }
@@ -1285,27 +1301,40 @@ fun DeviceRowCard(
     )
 
     // Glowing border color depending on device hex color representation if online
-    val cardBorder = if (isSelected) {
-        BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+    val targetCardBorderColor = if (isSelected) {
+        MaterialTheme.colorScheme.primary
     } else if (device.isOnline) {
-        val colorObj = try { Color(android.graphics.Color.parseColor(device.hexColor)) } catch (e: Exception) { MaterialTheme.colorScheme.outline }
-        BorderStroke(1.dp, colorObj.copy(alpha = 0.4f))
+        try { Color(android.graphics.Color.parseColor(device.hexColor)).copy(alpha = 0.5f) } catch (e: Exception) { MaterialTheme.colorScheme.outline.copy(alpha = 0.3f) }
     } else {
-        BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+        MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
     }
 
-    val cardBg = if (isSelected) {
-        MaterialTheme.colorScheme.surfaceVariant
+    val animatedBorderColor by androidx.compose.animation.animateColorAsState(
+        targetValue = targetCardBorderColor,
+        animationSpec = androidx.compose.animation.core.tween(400),
+        label = "borderColorAnim"
+    )
+
+    val targetCardBg = if (isSelected) {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
     } else {
-        MaterialTheme.colorScheme.surface
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.45f)
     }
+
+    val animatedBgColor by androidx.compose.animation.animateColorAsState(
+        targetValue = targetCardBg,
+        animationSpec = androidx.compose.animation.core.tween(400),
+        label = "bgColorAnim"
+    )
+
+    val cardBorder = BorderStroke(if (isSelected) 1.5.dp else 1.dp, animatedBorderColor)
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onSelect)
             .testTag("device_card_${device.id}"),
-        colors = CardDefaults.cardColors(containerColor = cardBg),
+        colors = CardDefaults.cardColors(containerColor = animatedBgColor),
         shape = RoundedCornerShape(16.dp),
         border = cardBorder,
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -1460,6 +1489,51 @@ fun DeviceControlSection(
     val selectedAudioUri by viewModel.selectedAudioUri.collectAsStateWithLifecycle()
     val audioHistory by viewModel.audioHistory.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    val timecodeLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            try {
+                val inputStream = context.contentResolver.openInputStream(it)
+                val jsonString = inputStream?.bufferedReader().use { reader -> reader?.readText() }
+                if (jsonString != null) {
+                    viewModel.prepareTimecodeImport(jsonString)
+                }
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, "Lỗi đọc file: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    // Timecode import → mock-to-real device mapping
+    val timecodeImportState by viewModel.timecodeImportState.collectAsStateWithLifecycle()
+
+    // Short error/validation messages (parse error, "chưa gán"...) still go through a toast.
+    LaunchedEffect(timecodeImportState.resultMessage) {
+        val msg = timecodeImportState.resultMessage
+        if (!msg.isNullOrBlank() && !timecodeImportState.showDialog) {
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+            viewModel.clearTimecodeResult()
+        }
+    }
+
+    if (timecodeImportState.showDialog) {
+        TimecodeMappingDialog(
+            state = timecodeImportState,
+            devices = devices,
+            onConfirm = { mapping -> viewModel.confirmTimecodeMapping(mapping) },
+            onDismiss = { viewModel.cancelTimecodeImport() }
+        )
+    }
+
+    // Rich, full result summary after the upload completes.
+    if (timecodeImportState.showResult && timecodeImportState.results.isNotEmpty()) {
+        TimecodeResultDialog(
+            state = timecodeImportState,
+            onDismiss = { viewModel.clearTimecodeResult() }
+        )
+    }
 
     val audioPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -1793,21 +1867,60 @@ fun DeviceControlSection(
                         }
 
                         // Section: Colors & Presets
-                        // Visual Color Preview Card
+                        // Visual Color Preview Card — glowing swatch + hex/RGB readout
                         Card(
-                            shape = RoundedCornerShape(24.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp),
-                            colors = CardDefaults.cardColors(containerColor = currentColor),
-                            border = BorderStroke(2.dp, Color.White.copy(alpha = 0.4f))
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            ),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                         ) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "Màu chủ đạo: ${device.hexColor.uppercase()}",
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (hsvVal < 0.5f) Color.White else Color.Black
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                // Glowing color swatch
+                                Box(
+                                    modifier = Modifier
+                                        .size(52.dp)
+                                        .shadow(12.dp, RoundedCornerShape(16.dp), spotColor = currentColor, ambientColor = currentColor)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(currentColor.copy(alpha = 0.95f), currentColor)
+                                            )
+                                        )
+                                        .border(1.5.dp, Color.White.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
                                 )
+
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = "MÀU CHỦ ĐẠO",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 1.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                                    )
+                                    Text(
+                                        text = device.hexColor.uppercase(),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Black,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "RGB " +
+                                            "${(currentColor.red * 255).toInt()}, " +
+                                            "${(currentColor.green * 255).toInt()}, " +
+                                            "${(currentColor.blue * 255).toInt()}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                    )
+                                }
                             }
                         }
 
@@ -2164,31 +2277,20 @@ fun DeviceControlSection(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    Button(
+                                    NeonActionButton(
+                                        text = "MỞ TOÀN BỘ",
+                                        icon = Icons.Default.PlayArrow,
+                                        neonColor = MaterialTheme.colorScheme.primary, // Cyan neon
                                         onClick = { viewModel.togglePowerAll(true) },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = Color(0xFF00C853) // Vivid green
-                                        ),
-                                        shape = RoundedCornerShape(14.dp),
-                                        modifier = Modifier.weight(1f).height(48.dp)
-                                    ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("MỞ TOÀN BỘ", fontWeight = FontWeight.Bold, color = Color.White)
-                                    }
-
-                                    Button(
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    NeonActionButton(
+                                        text = "TẮT TOÀN BỘ",
+                                        icon = Icons.Default.Close,
+                                        neonColor = MaterialTheme.colorScheme.secondary, // Magenta neon
                                         onClick = { viewModel.togglePowerAll(false) },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = Color(0xFFD50000) // Vivid red
-                                        ),
-                                        shape = RoundedCornerShape(14.dp),
-                                        modifier = Modifier.weight(1f).height(48.dp)
-                                    ) {
-                                        Icon(Icons.Default.Close, contentDescription = null, tint = Color.White)
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("TẮT TOÀN BỘ", fontWeight = FontWeight.Bold, color = Color.White)
-                                    }
+                                        modifier = Modifier.weight(1f)
+                                    )
                                 }
                             }
                         }
@@ -2345,91 +2447,6 @@ fun DeviceControlSection(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
-                                if (isPlaylistRunning) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        modifier = Modifier.padding(bottom = 4.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(0xFF00C853))
-                                        )
-                                        Text(
-                                            text = "Trạng thái: Đang phát kịch bản trình diễn tổng",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontSize = 11.sp,
-                                            color = Color(0xFF00C853),
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-
-                                if (isPlaylistRunning) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Button(
-                                            onClick = { viewModel.startPlaylistAllWithTimeline(249, forceRestart = true) },
-                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                                            shape = RoundedCornerShape(12.dp),
-                                            modifier = Modifier.height(52.dp).weight(1f)
-                                        ) {
-                                            Icon(Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("CHẠY LẠI", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                        }
-
-                                        Button(
-                                            onClick = { viewModel.stopPlaylistTimeline() },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD50000)),
-                                            shape = RoundedCornerShape(12.dp),
-                                            modifier = Modifier.height(52.dp).weight(1f)
-                                        ) {
-                                            Icon(Icons.Default.Close, contentDescription = null, tint = Color.White)
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("DỪNG PHÁT", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
-                                        }
-                                    }
-                                } else {
-                                    Button(
-                                        onClick = { viewModel.startPlaylistAllWithTimeline(249) },
-                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.fillMaxWidth().height(52.dp)
-                                    ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("CHẠY PLAYLIST TỔNG CHOREOGRAPHY", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-                                    }
-                                }
-
-                                // Custom running duration information (automatically calculated from playlist 249 or imported track)
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "⏱️ Thời gian kịch bản trình diễn (Tính toán tự động):",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                        )
-                                        val minSecString = String.format("%02d:%02d", playlistTotalSeconds / 60, playlistTotalSeconds % 60)
-                                        Text(
-                                            text = "$playlistTotalSeconds giây ($minSecString)",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Black,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                }
-
                                 // --- AUDIO SYNC CONTROLS & WAVEFORM VISUALIZER ---
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Card(
@@ -2650,8 +2667,132 @@ fun DeviceControlSection(
 
                                 // Playlist ID is locked to 249 as requested
 
+
+                                if (isPlaylistRunning) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.padding(bottom = 4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF00C853))
+                                        )
+                                        Text(
+                                            text = "Trạng thái: Đang phát kịch bản trình diễn tổng",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontSize = 11.sp,
+                                            color = Color(0xFF00C853),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                if (isPlaylistRunning) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { viewModel.startPlaylistAllWithTimeline(249, forceRestart = true) },
+                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.height(52.dp).weight(1f)
+                                        ) {
+                                            Icon(Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("CHẠY LẠI", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+
+                                        Button(
+                                            onClick = { viewModel.stopPlaylistTimeline() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD50000)),
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.height(52.dp).weight(1f)
+                                        ) {
+                                            Icon(Icons.Default.Close, contentDescription = null, tint = Color.White)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("DỪNG PHÁT", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                                        }
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = { viewModel.startPlaylistAllWithTimeline(249) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("CHẠY PLAYLIST TỔNG CHOREOGRAPHY", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                                    }
+                                }
+
+                                // Custom running duration information (automatically calculated from playlist 249 or imported track)
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "⏱️ Thời gian kịch bản trình diễn (Tính toán tự động):",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                        )
+                                        val minSecString = String.format("%02d:%02d", playlistTotalSeconds / 60, playlistTotalSeconds % 60)
+                                        Text(
+                                            text = "$playlistTotalSeconds giây ($minSecString)",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Black,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+
                                 // CHOREOGRAPHY BOARD TRACK VIEW
                                 Spacer(modifier = Modifier.height(12.dp))
+
+                                // Mount the heavy DAW timeline board LAST: switch into the tab instantly,
+                                // let the transition settle, then build the board (and let its device
+                                // fetch finish) behind a placeholder. Loading the timeline is not urgent.
+                                var boardReady by remember { mutableStateOf(false) }
+                                LaunchedEffect(Unit) {
+                                    kotlinx.coroutines.delay(350) // let the tab switch render fully first
+                                    boardReady = true
+                                }
+
+                                if (!boardReady) {
+                                    Card(
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(220.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+                                                Text(
+                                                    text = "Đang dựng bảng timeline biên đạo...",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else {
                                 Card(
                                     shape = RoundedCornerShape(16.dp),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
@@ -2659,6 +2800,7 @@ fun DeviceControlSection(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        // --- Title row: name + reload on the right ---
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -2666,76 +2808,96 @@ fun DeviceControlSection(
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                    Icon(Icons.Default.Build, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                                    Icon(Icons.Default.Build, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                                     Text(
-                                                        text = "BẢN ĐỒ BIÊN ĐẠO ĐA ĐIỂM (DAW STYLE)",
+                                                        text = "TIMELINE BIÊN ĐẠO",
                                                         style = MaterialTheme.typography.labelLarge,
                                                         fontWeight = FontWeight.Black
                                                     )
                                                 }
                                                 Text(
-                                                    text = "Xem kịch bản, chạm/kéo trên thước để tua nhanh (seek) playhead tức tí",
+                                                    text = "Chạm/kéo trên thước để tua nhanh playhead",
                                                     style = MaterialTheme.typography.bodySmall,
                                                     fontSize = 10.sp,
                                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                                                 )
                                             }
-                                            
+
+                                            // Reload timelines from devices
+                                            FilledTonalIconButton(
+                                                onClick = {
+                                                    val playlistId = syncPlaylistIdInput.toIntOrNull() ?: 249
+                                                    viewModel.fetchTimelinesForAllDevices(playlistId)
+                                                },
+                                                modifier = Modifier.size(36.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Refresh,
+                                                    contentDescription = "Tải lại",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+
+                                        // --- Action toolbar: Import (primary) + Lock toggle ---
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            androidx.compose.material3.Button(
+                                                onClick = { timecodeLauncher.launch("application/json") },
+                                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.primary,
+                                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                                ),
+                                                shape = RoundedCornerShape(10.dp),
+                                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                                                modifier = Modifier.weight(1f).height(40.dp)
+                                            ) {
+                                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(6.dp))
+                                                Text("IMPORT TIMECODE", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            }
+
+                                            // Lock/unlock ruler pill
+                                            val lockColor = if (isTimelineLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                modifier = Modifier
+                                                    .height(40.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(lockColor.copy(alpha = 0.12f))
+                                                    .border(1.dp, lockColor.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                                                    .clickable { viewModel.setTimelineLocked(!isTimelineLocked) }
+                                                    .padding(start = 10.dp, end = 6.dp)
                                             ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .background(
-                                                            if (isTimelineLocked) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
-                                                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-                                                        )
-                                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = if (isTimelineLocked) Icons.Default.Lock else Icons.Default.Build,
-                                                        contentDescription = null,
-                                                        tint = if (isTimelineLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(13.dp)
+                                                Icon(
+                                                    imageVector = if (isTimelineLocked) Icons.Default.Lock else Icons.Default.Edit,
+                                                    contentDescription = null,
+                                                    tint = lockColor,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Text(
+                                                    text = if (isTimelineLocked) "Khóa" else "Mở tua",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = lockColor
+                                                )
+                                                Switch(
+                                                    checked = isTimelineLocked,
+                                                    onCheckedChange = { viewModel.setTimelineLocked(it) },
+                                                    modifier = Modifier.scale(0.7f),
+                                                    colors = SwitchDefaults.colors(
+                                                        checkedThumbColor = MaterialTheme.colorScheme.error,
+                                                        checkedTrackColor = MaterialTheme.colorScheme.errorContainer,
+                                                        uncheckedThumbColor = MaterialTheme.colorScheme.primary,
+                                                        uncheckedTrackColor = MaterialTheme.colorScheme.primaryContainer
                                                     )
-                                                    Text(
-                                                        text = if (isTimelineLocked) "Khóa" else "Mở Tua",
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        fontSize = 9.5.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = if (isTimelineLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                                                    )
-                                                     Switch(
-                                                         checked = isTimelineLocked,
-                                                         onCheckedChange = { viewModel.setTimelineLocked(it) },
-                                                         modifier = Modifier.scale(0.7f).height(18.dp),
-                                                         colors = SwitchDefaults.colors(
-                                                             checkedThumbColor = MaterialTheme.colorScheme.error,
-                                                             checkedTrackColor = MaterialTheme.colorScheme.errorContainer,
-                                                             uncheckedThumbColor = MaterialTheme.colorScheme.primary,
-                                                             uncheckedTrackColor = MaterialTheme.colorScheme.primaryContainer
-                                                         )
-                                                     )
-                                                }
-
-                                                IconButton(
-                                                    onClick = {
-                                                        val playlistId = syncPlaylistIdInput.toIntOrNull() ?: 249
-                                                        viewModel.fetchTimelinesForAllDevices(playlistId)
-                                                    },
-                                                    modifier = Modifier.size(28.dp)
-                                                ) {
-                                                    Icon(
-                                                        Icons.Default.Refresh,
-                                                        contentDescription = "Tải lại",
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                }
+                                                )
                                             }
                                         }
 
@@ -2833,7 +2995,8 @@ fun DeviceControlSection(
                                                     }
                                                 }
                                             } else {
-                                                val totalTimelineWidth = (playlistTotalSeconds * pxPerSec).dp
+                                                val contentWidth = (playlistTotalSeconds * pxPerSec).dp
+                                                val totalTimelineWidth = contentWidth + 48.dp
                                                 
                                                 Row(modifier = Modifier.fillMaxWidth()) {
                                                     // Frozen Left Column (Device names and audio track)
@@ -2944,7 +3107,7 @@ fun DeviceControlSection(
                                                     ) {
                                                         Column(
                                                             verticalArrangement = Arrangement.spacedBy(8.dp),
-                                                            modifier = Modifier.width(totalTimelineWidth)
+                                                            modifier = Modifier.width(totalTimelineWidth).padding(horizontal = 24.dp)
                                                         ) {
                                                             // Timeline Ruler ticks
                                                             val density = LocalDensity.current.density
@@ -2991,48 +3154,54 @@ fun DeviceControlSection(
                                                                     }
                                                             ) {
                                                                 val tickStep = if (pxPerSec >= 24) 5 else if (pxPerSec >= 14) 10 else 20
-                                                                for (sec in 0..playlistTotalSeconds step tickStep) {
-                                                                    val tickX = (sec * pxPerSec).dp
-                                                                    Box(
-                                                                        modifier = Modifier
-                                                                            .offset(x = tickX)
-                                                                            .fillMaxHeight()
-                                                                    ) {
-                                                                        // Major Tick Accent
-                                                                        Box(
-                                                                            modifier = Modifier
-                                                                                .align(Alignment.BottomStart)
-                                                                                .width(1.5.dp)
-                                                                                .height(8.dp)
-                                                                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f))
+                                                                val majorTickColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                                                val minorTickColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+                                                                val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                                                val rulerDensity = LocalDensity.current.density
+
+                                                                // Draw ALL tick marks in a single Canvas instead of hundreds of Box
+                                                                // composables — major win for first composition of long timelines.
+                                                                Canvas(modifier = Modifier.matchParentSize()) {
+                                                                    val h = size.height
+                                                                    val pps = pxPerSec * rulerDensity
+                                                                    var s = 0
+                                                                    while (s <= playlistTotalSeconds) {
+                                                                        if (s % tickStep != 0 && s % 2 == 0) {
+                                                                            val x = s * pps
+                                                                            drawLine(
+                                                                                color = minorTickColor,
+                                                                                start = Offset(x, h),
+                                                                                end = Offset(x, h - 4.dp.toPx()),
+                                                                                strokeWidth = 1.dp.toPx()
+                                                                            )
+                                                                        }
+                                                                        s++
+                                                                    }
+                                                                    s = 0
+                                                                    while (s <= playlistTotalSeconds) {
+                                                                        val x = s * pps
+                                                                        drawLine(
+                                                                            color = majorTickColor,
+                                                                            start = Offset(x, h),
+                                                                            end = Offset(x, h - 8.dp.toPx()),
+                                                                            strokeWidth = 1.5.dp.toPx()
                                                                         )
-                                                                        // Label String
-                                                                        Text(
-                                                                            text = "${sec}s",
-                                                                            style = MaterialTheme.typography.bodySmall,
-                                                                            fontSize = 8.sp,
-                                                                            fontWeight = FontWeight.Bold,
-                                                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                                                            modifier = Modifier
-                                                                                .align(Alignment.TopStart)
-                                                                                .padding(start = 2.dp)
-                                                                        )
+                                                                        s += tickStep
                                                                     }
                                                                 }
-                                                                
-                                                                // Intermediate ticks
-                                                                for (sec in 0..playlistTotalSeconds) {
-                                                                    if (sec % tickStep != 0 && sec % 2 == 0) {
-                                                                        val tickX = (sec * pxPerSec).dp
-                                                                        Box(
-                                                                            modifier = Modifier
-                                                                                .offset(x = tickX)
-                                                                                .align(Alignment.BottomStart)
-                                                                                .width(1.dp)
-                                                                                .height(4.dp)
-                                                                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
-                                                                        )
-                                                                    }
+                                                                // Only the major-tick second labels remain as composables (~total/tickStep)
+                                                                for (sec in 0..playlistTotalSeconds step tickStep) {
+                                                                    Text(
+                                                                        text = "${sec}s",
+                                                                        style = MaterialTheme.typography.bodySmall,
+                                                                        fontSize = 8.sp,
+                                                                        fontWeight = FontWeight.Bold,
+                                                                        color = labelColor,
+                                                                        modifier = Modifier
+                                                                            .align(Alignment.TopStart)
+                                                                            .offset(x = (sec * pxPerSec).dp)
+                                                                            .padding(start = 2.dp)
+                                                                    )
                                                                 }
                                                             }
 
@@ -3081,56 +3250,64 @@ fun DeviceControlSection(
                                                                         }
                                                                     }
                                                             ) {
-                                                                val activeColor = Color(0xFF00E676)
-                                                                val inactiveColor = Color(0xFF00B0FF)
+                                                                val activeColorTop = Color(0xFF00F0FF)
+                                                                val activeColorBot = Color(0xFFFF007F)
+                                                                val inactiveColorTop = Color(0xFF00B0FF)
+                                                                val inactiveColorBot = Color(0xFF8B5CF6)
                                                                 val unplayedColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
 
+                                                                // Precompute bar amplitudes once (depends only on audio + length, not on
+                                                                // playback time) so the Canvas no longer recomputes ~900 sin/random every frame.
+                                                                val waveformAmplitudes = remember(selectedAudioName, playlistTotalSeconds) {
+                                                                    val sps = 5
+                                                                    val steps = playlistTotalSeconds * sps
+                                                                    val rnd = java.util.Random(selectedAudioName.hashCode().toLong())
+                                                                    FloatArray(steps) { step ->
+                                                                        val barRatio = if (steps > 1) step.toFloat() / (steps - 1) else 0.5f
+                                                                        val envelope = Math.sin(barRatio * Math.PI).toFloat()
+                                                                        val noise = rnd.nextFloat() * 0.25f
+                                                                        val combinedWave = Math.sin(barRatio * Math.PI * 18.0).toFloat() * 0.45f +
+                                                                                           Math.sin(barRatio * Math.PI * 52.0).toFloat() * 0.3f +
+                                                                                           noise
+                                                                        (0.22f + Math.abs(combinedWave) * envelope * 0.78f).coerceIn(0.12f, 1.0f)
+                                                                    }
+                                                                }
+
                                                                 Canvas(modifier = Modifier.fillMaxSize()) {
-                                                                    val widthPx = size.width
                                                                     val heightPx = size.height
-                                                                    val totalSec = playlistTotalSeconds.toFloat()
                                                                     val elSec = playlistElapsedSeconds
-                                                                    
-                                                                    val nameSeed = selectedAudioName.hashCode().toLong()
-                                                                    val random = java.util.Random(nameSeed)
-                                                                    
-                                                                    val densityRatio = density
-                                                                    val pxPerSecFloat = pxPerSec * densityRatio
-                                                                    
+
+                                                                    val pxPerSecFloat = pxPerSec * density
                                                                     val stepsPerSecond = 5
-                                                                    val totalSteps = playlistTotalSeconds * stepsPerSecond
+                                                                    val totalSteps = waveformAmplitudes.size
                                                                     val segmentWidthPx = pxPerSecFloat / stepsPerSecond
                                                                     val barWidthPx = (segmentWidthPx * 0.55f).coerceIn(1.2f, 15f)
-                                                                    
+
                                                                     for (step in 0 until totalSteps) {
                                                                         val barTime = step.toFloat() / stepsPerSecond
-                                                                        val barRatio = if (totalSteps > 1) step.toFloat() / (totalSteps - 1) else 0.5f
-                                                                        
-                                                                        // Wave envelope calculation with dual-frequency sines & seeded noise
-                                                                        val envelope = Math.sin(barRatio * Math.PI).toFloat()
-                                                                        val waveRatio1 = barRatio * Math.PI * 18.0
-                                                                        val waveRatio2 = barRatio * Math.PI * 52.0
-                                                                        val noise = random.nextFloat() * 0.25f
-                                                                        val combinedWave = Math.sin(waveRatio1).toFloat() * 0.45f + 
-                                                                                           Math.sin(waveRatio2).toFloat() * 0.3f + 
-                                                                                           noise
-                                                                        val amplitude = (0.22f + Math.abs(combinedWave) * envelope * 0.78f).coerceIn(0.12f, 1.0f)
-                                                                        
+                                                                        val amplitude = waveformAmplitudes[step]
+
                                                                         val isPlayed = barTime <= elSec
                                                                         val barHeight = amplitude * (heightPx * 0.75f)
                                                                         
                                                                         // Mathematically aligned position exactly locked to the timeline
                                                                         val xPos = barTime * pxPerSecFloat + (segmentWidthPx / 2f)
                                                                         val centerY = heightPx / 2f
+                                                                        val topY = centerY - barHeight / 2f
+                                                                        val botY = centerY + barHeight / 2f
                                                                         
-                                                                        val barColor = if (isPlayed) {
-                                                                            if (isPlaylistRunning) activeColor else inactiveColor
+                                                                        val lineBrush = if (isPlayed) {
+                                                                            if (isPlaylistRunning) {
+                                                                                androidx.compose.ui.graphics.Brush.verticalGradient(listOf(activeColorTop, activeColorBot), startY = topY, endY = botY)
+                                                                            } else {
+                                                                                androidx.compose.ui.graphics.Brush.verticalGradient(listOf(inactiveColorTop, inactiveColorBot), startY = topY, endY = botY)
+                                                                            }
                                                                         } else {
-                                                                            unplayedColor
+                                                                            androidx.compose.ui.graphics.SolidColor(unplayedColor)
                                                                         }
                                                                         
                                                                         drawLine(
-                                                                            color = barColor,
+                                                                            brush = lineBrush,
                                                                             start = Offset(xPos, centerY - barHeight / 2f),
                                                                             end = Offset(xPos, centerY + barHeight / 2f),
                                                                             strokeWidth = barWidthPx,
@@ -3234,7 +3411,7 @@ fun DeviceControlSection(
                                                                 .align(Alignment.TopStart)
                                                                 .offset {
                                                                     val pxOffset = playlistElapsedSecondsState.value * pxPerSec * density
-                                                                    androidx.compose.ui.unit.IntOffset((pxOffset - 8.dp.toPx()).toInt(), 0)
+                                                                    androidx.compose.ui.unit.IntOffset((pxOffset - 8.dp.toPx() + 24.dp.toPx()).toInt(), 0)
                                                                 }
                                                                 .width(16.dp)
                                                                 .fillMaxHeight()
@@ -3284,6 +3461,7 @@ fun DeviceControlSection(
                                             }
                                         }
                                     }
+                                }
                                 }
 
                                 // REAL-TIME TIMELINE ACTION TRACK (ALWAYS VISIBLE)!
@@ -3766,29 +3944,80 @@ fun TimelineStepItem(
             isPlaylistRunning && (playlistElapsedSecondsState.value >= step.startSecond.toFloat() && playlistElapsedSecondsState.value < step.endSecond.toFloat())
         }
     }
+    
+    val isFinished by remember(isPlaylistRunning) {
+        derivedStateOf {
+            playlistElapsedSecondsState.value >= step.endSecond.toFloat()
+        }
+    }
+    
+    val stepProgress by remember(isPlaylistRunning) {
+        derivedStateOf {
+            if (!isPlaylistRunning || playlistElapsedSecondsState.value < step.startSecond) 0f
+            else if (playlistElapsedSecondsState.value >= step.endSecond) 1f
+            else {
+                val elapsedInStep = playlistElapsedSecondsState.value - step.startSecond
+                (elapsedInStep / stepWidthFloat).coerceIn(0f, 1f)
+            }
+        }
+    }
 
-    val stepColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.12f, 0.92f)))
-    val activeStepColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.32f, 0.95f)))
-    val stepBorderColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.25f, 0.75f)))
-    val activeStepBorderColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.80f, 0.70f)))
-    val activeStepTextColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.90f, 0.30f)))
+    // High-Tech Dark Colors with Neon Accents
+    val baseColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.5f, 0.4f))).copy(alpha = if (isFinished) 0.15f else 0.4f)
+    val neonColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.8f, 1.0f)))
+    val borderColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(stepHue.toFloat(), 0.6f, 0.6f))).copy(alpha = if (isFinished) 0.15f else 0.35f)
+    
+    val animatedBorderColor by androidx.compose.animation.animateColorAsState(
+        targetValue = if (isStepActive) neonColor else borderColor,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 200)
+    )
+    
+    val animatedScaleY by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isStepActive) 1.15f else 1.0f,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 250, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+    )
+
+    val activeTextColor = Color.White
+    val inactiveTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isFinished) 0.3f else 0.7f)
 
     Box(
         modifier = Modifier
             .width(stepWidth)
             .fillMaxHeight()
             .padding(horizontal = 0.5.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(
-                if (isStepActive) activeStepColor
-                else stepColor
-            )
+            .scale(scaleX = 1f, scaleY = animatedScaleY)
+            .clip(RoundedCornerShape(4.dp))
             .border(
-                width = if (isStepActive) 1.5.dp else 0.5.dp,
-                color = if (isStepActive) activeStepBorderColor
-                        else stepBorderColor,
-                shape = RoundedCornerShape(3.dp)
+                width = if (isStepActive) 1.5.dp else 1.dp,
+                color = animatedBorderColor,
+                shape = RoundedCornerShape(4.dp)
             )
+            .drawBehind {
+                drawRect(color = baseColor)
+                
+                // Draw neon sweep progress if active or finished
+                if (stepProgress > 0f) {
+                    val sweepWidth = size.width * stepProgress
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(neonColor.copy(alpha = 0.1f), neonColor.copy(alpha = if (isFinished) 0.2f else 0.7f)),
+                            startX = 0f,
+                            endX = sweepWidth
+                        ),
+                        size = androidx.compose.ui.geometry.Size(width = sweepWidth, height = size.height)
+                    )
+                    
+                    // Draw scanning laser edge
+                    if (!isFinished && isStepActive) {
+                        drawLine(
+                            color = Color.White,
+                            start = Offset(sweepWidth, 0f),
+                            end = Offset(sweepWidth, size.height),
+                            strokeWidth = 1.5.dp.toPx()
+                        )
+                    }
+                }
+            }
             .padding(horizontal = 2.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -3797,8 +4026,8 @@ fun TimelineStepItem(
                 text = step.presetName,
                 style = MaterialTheme.typography.bodySmall,
                 fontSize = 7.5.sp,
-                fontWeight = if (isStepActive) FontWeight.ExtraBold else FontWeight.Normal,
-                color = if (isStepActive) activeStepTextColor else Color.DarkGray,
+                fontWeight = if (isStepActive) FontWeight.ExtraBold else FontWeight.Medium,
+                color = if (isStepActive) activeTextColor else inactiveTextColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -3806,7 +4035,7 @@ fun TimelineStepItem(
                 text = "${stepWidthFloat.toInt()}s",
                 style = MaterialTheme.typography.bodySmall,
                 fontSize = 6.sp,
-                color = Color.DarkGray.copy(alpha = 0.5f)
+                color = if (isStepActive) activeTextColor.copy(alpha = 0.8f) else inactiveTextColor.copy(alpha = 0.6f)
             )
         }
     }
@@ -3822,4 +4051,444 @@ fun formatTimestamp(timestamp: Long): String {
     if (timestamp == 0L) return "Không có lịch sử"
     val sdf = SimpleDateFormat("HH:mm:ss dd/MM/yyyy", Locale.getDefault())
     return sdf.format(Date(timestamp))
+}
+
+/**
+ * Dialog that lets the user map each Mock device found in the imported timecode file
+ * (left) to a real registered WLED device (right). On confirm it returns a
+ * mockId -> realIp map to the ViewModel, which bakes + compiles + uploads presets.json.
+ */
+@Composable
+fun TimecodeMappingDialog(
+    state: TimecodeImportUiState,
+    devices: List<WledDevice>,
+    onConfirm: (Map<String, String>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // mockId -> selected real device IP ("" = chưa gán)
+    val selections = remember { mutableStateMapOf<String, String>() }
+    val assignedCount = selections.values.count { it.isNotBlank() }
+
+    Dialog(onDismissRequest = { if (!state.isProcessing) onDismiss() }) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // Header
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Build, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "GÁN THIẾT BỊ TIMECODE",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black
+                        )
+                        Text(
+                            text = "Tìm thấy ${state.mockDevices.size} thiết bị Mock. Gán mỗi Mock với một thiết bị thật để nạp playlist.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+
+                if (devices.isEmpty()) {
+                    Text(
+                        text = "⚠️ Chưa có thiết bị thật nào trong danh sách. Hãy thêm/quét thiết bị trước khi gán.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+
+                // Mapping rows (scrollable if many mock devices)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    state.mockDevices.forEach { mock ->
+                        val selectedIp = selections[mock.id] ?: ""
+                        // Devices already assigned to OTHER mocks — hide them from this row's
+                        // dropdown so a real device can't be picked twice.
+                        val takenByOthers = selections
+                            .filterKeys { it != mock.id }
+                            .values
+                            .filter { it.isNotBlank() }
+                            .toSet()
+                        val availableDevices = devices.filter {
+                            it.ipAddress == selectedIp || it.ipAddress !in takenByOthers
+                        }
+                        TimecodeMappingRow(
+                            mock = mock,
+                            devices = availableDevices,
+                            selectedIp = selectedIp,
+                            enabled = !state.isProcessing,
+                            onSelect = { ip -> selections[mock.id] = ip }
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+
+                // Footer actions
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (state.isProcessing) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Đang nạp lên thiết bị...", style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.weight(1f))
+                    } else {
+                        TextButton(onClick = onDismiss) { Text("Hủy") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = { onConfirm(selections.toMap()) },
+                            enabled = assignedCount > 0
+                        ) {
+                            Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Nạp ($assignedCount)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimecodeMappingRow(
+    mock: TimecodeMockDevice,
+    devices: List<WledDevice>,
+    selectedIp: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedDevice = devices.find { it.ipAddress == selectedIp }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // Left: mock device
+        Column(modifier = Modifier.weight(1f)) {
+            Text(mock.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = "${mock.id} • ${mock.clipCount} clip",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+            )
+        }
+
+        Icon(Icons.Default.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+
+        // Right: real device dropdown
+        Box(modifier = Modifier.weight(1.2f)) {
+            OutlinedButton(
+                onClick = { expanded = true },
+                enabled = enabled,
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = selectedDevice?.name ?: "— Chọn thiết bị —",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Start,
+                    color = if (selectedDevice != null) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(
+                    text = { Text("— Bỏ gán —") },
+                    onClick = { onSelect(""); expanded = false }
+                )
+                devices.forEach { device ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(device.name, fontWeight = FontWeight.Medium)
+                                Text(
+                                    device.ipAddress,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                )
+                            }
+                        },
+                        onClick = { onSelect(device.ipAddress); expanded = false }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Full, styled summary shown after a timecode upload finishes — one card per device
+ * with success/failure state, clip count and total show duration.
+ */
+@Composable
+fun TimecodeResultDialog(
+    state: TimecodeImportUiState,
+    onDismiss: () -> Unit
+) {
+    val results = state.results
+    val successCount = results.count { it.success }
+    val allOk = successCount == results.size
+    val accent = if (allOk) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary
+
+    val totalSec = state.totalSeconds.toInt()
+    val durationText = String.format("%02d:%02d", totalSec / 60, totalSec % 60)
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, accent.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // Header with big status icon
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(accent.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (allOk) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (allOk) "NẠP TIMECODE THÀNH CÔNG" else "NẠP HOÀN TẤT (CÓ LỖI)",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black
+                        )
+                        Text(
+                            text = "Đã nạp $successCount/${results.size} thiết bị • Thời lượng kịch bản $durationText",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+
+                // Per-device result cards
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    results.forEach { result ->
+                        val rowColor = if (result.success) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(rowColor.copy(alpha = 0.08f))
+                                .border(1.dp, rowColor.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (result.success) Icons.Default.CheckCircle else Icons.Default.Close,
+                                contentDescription = null,
+                                tint = rowColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                // mock → real device
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = result.mockName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Icon(Icons.Default.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), modifier = Modifier.size(14.dp))
+                                    Text(
+                                        text = result.deviceName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = rowColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                }
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = if (result.success)
+                                        "✓ Đã nạp ${result.clipCount} clip vào playlist 249 • ${result.deviceIp}"
+                                    else
+                                        "✗ Lỗi: ${result.error} • ${result.deviceIp}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Hint on what to do next when at least one device succeeded
+                if (successCount > 0) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "Nhấn \"CHẠY PLAYLIST TỔNG CHOREOGRAPHY\" để bắt đầu trình diễn đồng loạt.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Button(onClick = onDismiss, shape = RoundedCornerShape(10.dp)) {
+                        Text("Đã hiểu")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A neon-styled action button matching the Happy Smart Light cyber theme.
+ * Layered for a complete glass-neon look: outer colored glow → dark glass body with a
+ * vertical neon sheen → gradient neon rim → top gloss highlight → icon in a glowing
+ * badge + neon label. Press feedback dims the glow and slightly shrinks the button.
+ */
+@Composable
+fun NeonActionButton(
+    text: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    neonColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(16.dp)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+
+    val scale by animateFloatAsState(if (pressed) 0.955f else 1f, label = "neonScale")
+    val glow by animateDpAsState(if (pressed) 3.dp else 16.dp, label = "neonGlow")
+    val rimAlpha by animateFloatAsState(if (pressed) 1f else 0.85f, label = "neonRim")
+
+    // Dark glass base so the neon reads like a lit sign rather than a flat tint.
+    val glassTop = Color(0xFF1A1A2B)
+    val glassBottom = Color(0xFF0C0C16)
+
+    Box(
+        modifier = modifier
+            .scale(scale)
+            .height(54.dp)
+            .shadow(elevation = glow, shape = shape, spotColor = neonColor, ambientColor = neonColor)
+            .clip(shape)
+            // 1) Dark glass body
+            .background(Brush.verticalGradient(listOf(glassTop, glassBottom)))
+            .clickable(
+                interactionSource = interaction,
+                indication = androidx.compose.foundation.LocalIndication.current,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        // 2) Neon sheen rising from the bottom edge
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.55f to neonColor.copy(alpha = 0.10f),
+                        1f to neonColor.copy(alpha = 0.34f)
+                    )
+                )
+        )
+        // 3) Top gloss highlight for a glassy finish
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0.10f),
+                        0.4f to Color.Transparent
+                    )
+                )
+        )
+        // 4) Gradient neon rim
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .border(
+                    width = 1.5.dp,
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            neonColor.copy(alpha = rimAlpha),
+                            neonColor.copy(alpha = rimAlpha * 0.45f)
+                        )
+                    ),
+                    shape = shape
+                )
+        )
+        // 5) Content: glowing icon badge + neon label
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(neonColor.copy(alpha = 0.16f))
+                    .border(1.dp, neonColor.copy(alpha = 0.7f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = neonColor, modifier = Modifier.size(17.dp))
+            }
+            Text(
+                text = text,
+                fontWeight = FontWeight.Black,
+                color = neonColor,
+                letterSpacing = 1.sp,
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
+    }
 }

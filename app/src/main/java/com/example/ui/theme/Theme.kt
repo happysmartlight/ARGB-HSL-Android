@@ -12,14 +12,22 @@ private val CyberDarkColorScheme = darkColorScheme(
     secondary = NeonMagenta,
     tertiary = CyberGreen,
     background = DarkBackground,
+    // Popups (dialogs, dropdown menus) and cards use `surface`/`surfaceVariant` as their
+    // background — these MUST be opaque, otherwise content behind a popup bleeds through and
+    // text overlaps. Intentional "glass" cards apply their own .copy(alpha=…) on top of this.
     surface = SynthSurface,
+    surfaceContainer = SynthSurface,
+    surfaceContainerHigh = Color(0xFF20203A),
+    surfaceContainerHighest = Color(0xFF24243E),
+    surfaceContainerLow = Color(0xFF16162A),
+    surfaceContainerLowest = Color(0xFF101020),
     onPrimary = Color(0xFF001122),
     onSecondary = Color.White,
     onBackground = LightSlate,
     onSurface = LightIce,
     surfaceVariant = Color(0xFF24243E),
     onSurfaceVariant = LightSlate,
-    outline = MutedSlate
+    outline = MutedSlate.copy(alpha = 0.4f)
 )
 
 private val CyberLightColorScheme = lightColorScheme(

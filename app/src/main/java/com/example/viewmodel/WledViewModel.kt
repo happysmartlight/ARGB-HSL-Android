@@ -16,6 +16,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 import kotlinx.coroutines.flow.map
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 
 sealed class AddDeviceState {
     object Idle : AddDeviceState()
@@ -755,7 +757,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private val _playlistStepsCount = MutableStateFlow(0)
     val playlistStepsCount: StateFlow<Int> = _playlistStepsCount.asStateFlow()
 
-    private val _isTimelineLocked = MutableStateFlow(false) // Unlocked by default so users can seek easily, but switch can lock it.
+    private val _isTimelineLocked = MutableStateFlow(true) // Locked by default to avoid accidental seeks; user can unlock via the switch.
     val isTimelineLocked: StateFlow<Boolean> = _isTimelineLocked.asStateFlow()
 
     private val _isChoreographyMode = MutableStateFlow(false) // True when user manually seeks
@@ -1264,10 +1266,443 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    // ============================================================
+    // TIMECODE IMPORT & UPLOAD (mock -> real device mapping flow)
+    // ============================================================
+
+    // Reserved slots per the integration guide — never allocate these for baking.
+    private val timecodeSkipSlots = setOf(100, 248, 249, 250)
+    private val timecodeSlotRange = 60..240
+    private val timecodeGapTolerance = 0.05
+
+    private val _timecodeImportState = MutableStateFlow(TimecodeImportUiState())
+    val timecodeImportState: StateFlow<TimecodeImportUiState> = _timecodeImportState.asStateFlow()
+
+    // Holds the parsed config between "open dialog" and "confirm mapping".
+    private var pendingTimecodeConfig: org.json.JSONObject? = null
+
+    /**
+     * Step 1: parse the picked timecode file, extract the mock devices and open the
+     * mapping dialog. Does NOT touch the network.
+     */
+    fun prepareTimecodeImport(jsonString: String) {
+        try {
+            val config = org.json.JSONObject(jsonString)
+            val version = config.optInt("version", 1)
+            if (version > 1) {
+                _timecodeImportState.value = TimecodeImportUiState(
+                    resultMessage = "File timecode phiên bản $version chưa được hỗ trợ (app hỗ trợ tối đa v1)."
+                )
+                return
+            }
+
+            // Count clips per mock device id from the tracks array.
+            val clipCounts = mutableMapOf<String, Int>()
+            val tracks = config.optJSONArray("tracks")
+            if (tracks != null) {
+                for (i in 0 until tracks.length()) {
+                    val track = tracks.getJSONObject(i)
+                    val ip = track.optString("ip")
+                    if (!ip.startsWith("mock:")) continue
+                    val clips = track.optJSONArray("clips")
+                    clipCounts[ip] = (clipCounts[ip] ?: 0) + (clips?.length() ?: 0)
+                }
+            }
+
+            // Build the mock device list. Prefer the explicit mock_devices array,
+            // but fall back to any mock track ip we found.
+            val mockDevices = mutableListOf<TimecodeMockDevice>()
+            val seen = mutableSetOf<String>()
+            val mockArray = config.optJSONArray("mock_devices")
+            if (mockArray != null) {
+                for (i in 0 until mockArray.length()) {
+                    val m = mockArray.getJSONObject(i)
+                    val id = m.optString("id")
+                    if (id.isBlank() || !seen.add(id)) continue
+                    mockDevices.add(
+                        TimecodeMockDevice(
+                            id = id,
+                            name = m.optString("name", id),
+                            clipCount = clipCounts[id] ?: 0
+                        )
+                    )
+                }
+            }
+            // Include mock tracks that weren't listed in mock_devices.
+            for ((id, count) in clipCounts) {
+                if (seen.add(id)) {
+                    mockDevices.add(TimecodeMockDevice(id = id, name = id, clipCount = count))
+                }
+            }
+
+            if (mockDevices.isEmpty()) {
+                _timecodeImportState.value = TimecodeImportUiState(
+                    resultMessage = "Không tìm thấy thiết bị Mock nào trong file timecode."
+                )
+                pendingTimecodeConfig = null
+                return
+            }
+
+            pendingTimecodeConfig = config
+            _timecodeImportState.value = TimecodeImportUiState(
+                showDialog = true,
+                mockDevices = mockDevices
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("WledViewModel", "Error parsing timecode", e)
+            _timecodeImportState.value = TimecodeImportUiState(
+                resultMessage = "Lỗi đọc file timecode: ${e.message}"
+            )
+            pendingTimecodeConfig = null
+        }
+    }
+
+    /** Dismiss the mapping dialog without uploading. */
+    fun cancelTimecodeImport() {
+        pendingTimecodeConfig = null
+        _timecodeImportState.value = TimecodeImportUiState()
+    }
+
+    /** Clear any leftover result banner / close the result dialog. */
+    fun clearTimecodeResult() {
+        _timecodeImportState.value = _timecodeImportState.value.copy(
+            resultMessage = null,
+            showResult = false,
+            results = emptyList()
+        )
+    }
+
+    /**
+     * Step 3-6 of the guide: for each (mockId -> real device IP) pair, bake the mock
+     * clips onto the real device, compile the playlist into slot 249 and upload once.
+     * @param mapping mock device id -> real device IP address.
+     */
+    fun confirmTimecodeMapping(mapping: Map<String, String>) {
+        val config = pendingTimecodeConfig
+        if (config == null) {
+            _timecodeImportState.value = TimecodeImportUiState(resultMessage = "Không có dữ liệu timecode để nạp.")
+            return
+        }
+        val validMapping = mapping.filterValues { it.isNotBlank() }
+        if (validMapping.isEmpty()) {
+            _timecodeImportState.value = _timecodeImportState.value.copy(
+                resultMessage = "Vui lòng gán ít nhất một thiết bị Mock với thiết bị thật."
+            )
+            return
+        }
+
+        _timecodeImportState.value = _timecodeImportState.value.copy(isProcessing = true, resultMessage = null)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val tracks = config.optJSONArray("tracks") ?: org.json.JSONArray()
+            val defaults = config.optJSONObject("defaults")
+            val loop = defaults?.optBoolean("loop", false) ?: false
+
+            // Timeline length = furthest clip end across every mapped mock track, so all
+            // devices share the same total duration (trailing OFF pads the shorter ones).
+            var timelineSeconds = 0.0
+            for (i in 0 until tracks.length()) {
+                val track = tracks.getJSONObject(i)
+                if (!validMapping.containsKey(track.optString("ip"))) continue
+                val clips = track.optJSONArray("clips") ?: continue
+                for (j in 0 until clips.length()) {
+                    val clip = clips.getJSONObject(j)
+                    val end = clip.optDouble("start", 0.0) + clip.optDouble("duration", 0.0)
+                    if (end > timelineSeconds) timelineSeconds = end
+                }
+            }
+
+            val results = mutableListOf<TimecodeUploadResult>()
+            for ((mockId, realIp) in validMapping) {
+                val mockDevice = _timecodeImportState.value.mockDevices.find { it.id == mockId }
+                val mockName = mockDevice?.name ?: mockId
+                val deviceName = devices.value.find { it.ipAddress == realIp }?.name ?: realIp
+                try {
+                    val uploaded = bakeAndUploadForDevice(config, mockId, realIp, timelineSeconds, loop)
+                    results.add(
+                        TimecodeUploadResult(
+                            mockName = mockName,
+                            deviceName = deviceName,
+                            deviceIp = realIp,
+                            clipCount = uploaded,
+                            success = true
+                        )
+                    )
+                    log("Timecode: nạp $uploaded clip vào $deviceName ($realIp) từ \"$mockName\" thành công.", "INFO")
+                } catch (e: Exception) {
+                    android.util.Log.e("WledViewModel", "Timecode upload failed for $realIp", e)
+                    results.add(
+                        TimecodeUploadResult(
+                            mockName = mockName,
+                            deviceName = deviceName,
+                            deviceIp = realIp,
+                            clipCount = 0,
+                            success = false,
+                            error = e.message ?: "Lỗi không xác định"
+                        )
+                    )
+                    log("Timecode: lỗi nạp vào $deviceName ($realIp) - ${e.message}", "ERROR")
+                }
+            }
+
+            pendingTimecodeConfig = null
+            _timecodeImportState.value = TimecodeImportUiState(
+                showDialog = false,
+                isProcessing = false,
+                results = results,
+                showResult = true,
+                totalSeconds = timelineSeconds
+            )
+        }
+    }
+
+    /**
+     * Read presets.json from [realIp], bake every mock clip with a bake_snapshot into a
+     * free slot, compile the playlist into slot 249 and upload the whole presets.json once.
+     * @return number of clips written into the playlist.
+     */
+    private suspend fun bakeAndUploadForDevice(
+        config: org.json.JSONObject,
+        mockId: String,
+        realIp: String,
+        timelineSeconds: Double,
+        loop: Boolean
+    ): Int = withContext(Dispatchers.IO) {
+        // Gather and time-sort this mock device's clips.
+        val tracks = config.optJSONArray("tracks") ?: org.json.JSONArray()
+        val clips = mutableListOf<org.json.JSONObject>()
+        for (i in 0 until tracks.length()) {
+            val track = tracks.getJSONObject(i)
+            if (track.optString("ip") != mockId) continue
+            val cs = track.optJSONArray("clips") ?: continue
+            for (j in 0 until cs.length()) clips.add(cs.getJSONObject(j))
+        }
+        clips.sortBy { it.optDouble("start", 0.0) }
+
+        // Read the device's existing presets so we don't clobber the user's slots.
+        val presets = fetchPresetsJsonObject(realIp)
+
+        // Upload binary file dependencies first (deduped by path).
+        val uploadedFiles = mutableSetOf<String>()
+        for (clip in clips) {
+            val snapshot = clip.optJSONObject("bake_snapshot") ?: continue
+            val files = snapshot.optJSONArray("files") ?: continue
+            for (k in 0 until files.length()) {
+                val file = files.getJSONObject(k)
+                val path = file.optString("path")
+                val b64 = file.optString("content_b64", "")
+                if (path.isBlank() || b64.isBlank() || !uploadedFiles.add(path)) continue
+                uploadBinaryFile(realIp, path, b64)
+            }
+        }
+
+        // Bake clips + build playlist entries in timeline order.
+        val psArray = org.json.JSONArray()
+        val durArray = org.json.JSONArray()
+        val transArray = org.json.JSONArray()
+        var lastEnd = 0.0
+        var needsOff = false
+        var clipCount = 0
+
+        for (clip in clips) {
+            val start = clip.optDouble("start", 0.0)
+            val duration = clip.optDouble("duration", 0.0)
+            val transition = clip.optDouble("transition", 0.0)
+
+            // Insert OFF placeholder for the gap before this clip.
+            val gap = start - lastEnd
+            if (gap > timecodeGapTolerance) {
+                psArray.put(248)
+                durArray.put(maxOf(1, Math.round(gap * 10).toInt()))
+                transArray.put(0)
+                needsOff = true
+            }
+
+            val snapshot = clip.optJSONObject("bake_snapshot")
+            val slot: Int
+            if (snapshot != null) {
+                val payload = snapshot.optJSONObject("payload")
+                    ?: throw Exception("bake_snapshot thiếu payload")
+                val free = findFreeSlot(presets)
+                    ?: throw Exception("Hết slot trống (60-240) trên thiết bị")
+                presets.put(free.toString(), payload)
+                slot = free
+            } else {
+                // Preset-type clip that references a preset already on the device.
+                val pid = clip.optInt("preset_id", -1)
+                if (pid <= 0) {
+                    lastEnd = maxOf(lastEnd, start + duration)
+                    continue
+                }
+                slot = pid
+            }
+
+            psArray.put(slot)
+            durArray.put(maxOf(1, Math.round(duration * 10).toInt()))
+            transArray.put(maxOf(0, Math.round(transition * 10).toInt()))
+            lastEnd = maxOf(lastEnd, start + duration)
+            clipCount++
+        }
+
+        // Trailing OFF so every device ends at the same timeline length.
+        val trailing = timelineSeconds - lastEnd
+        if (trailing > timecodeGapTolerance) {
+            psArray.put(248)
+            durArray.put(maxOf(1, Math.round(trailing * 10).toInt()))
+            transArray.put(0)
+            needsOff = true
+        }
+
+        if (clipCount == 0) throw Exception("Thiết bị Mock không có clip hợp lệ")
+
+        // TIMELINE_OFF placeholder preset (slot 248) if any gap exists.
+        if (needsOff) {
+            presets.put("248", buildTimelineOffPreset())
+        }
+
+        // Compile playlist into slot 249.
+        val playlist = org.json.JSONObject().apply {
+            put("ps", psArray)
+            put("dur", durArray)
+            put("transition", transArray)
+            put("repeat", if (loop) 0 else 1)
+            put("end", 0)
+            put("r", 0)
+        }
+        presets.put("249", org.json.JSONObject().apply {
+            put("playlist", playlist)
+            put("on", true)
+            put("n", "Timecode 249")
+        })
+
+        // Single upload of the merged presets.json.
+        uploadPresetsJson(realIp, presets.toString())
+        clipCount
+    }
+
+    /** GET /presets.json → JSONObject. Returns an empty object if the device has none. */
+    private suspend fun fetchPresetsJsonObject(ip: String): org.json.JSONObject = withContext(Dispatchers.IO) {
+        val client = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        val request = okhttp3.Request.Builder().url("http://$ip/presets.json").build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("Không đọc được presets.json (HTTP ${response.code})")
+            val body = response.body?.string()?.trim()
+            if (body.isNullOrEmpty() || body == "null") org.json.JSONObject() else org.json.JSONObject(body)
+        }
+    }
+
+    /** First free slot in 60..240, skipping reserved slots and existing keys. */
+    private fun findFreeSlot(presets: org.json.JSONObject): Int? {
+        for (slot in timecodeSlotRange) {
+            if (slot in timecodeSkipSlots) continue
+            val key = slot.toString()
+            if (!presets.has(key) || presets.isNull(key)) return slot
+        }
+        return null
+    }
+
+    private fun buildTimelineOffPreset(): org.json.JSONObject = org.json.JSONObject().apply {
+        put("n", "TIMELINE_OFF")
+        val seg = org.json.JSONObject().apply {
+            put("id", 0)
+            put("fx", 0)
+            put("col", org.json.JSONArray().apply {
+                put(org.json.JSONArray().apply { put(0); put(0); put(0) })
+            })
+        }
+        put("seg", org.json.JSONArray().apply { put(seg) })
+    }
+
+    /** Upload one binary file (BMP/GIF) decoded from base64 to the device FS. */
+    private suspend fun uploadBinaryFile(ip: String, path: String, contentB64: String) = withContext(Dispatchers.IO) {
+        try {
+            val bytes = android.util.Base64.decode(contentB64, android.util.Base64.DEFAULT)
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            val filename = if (path.startsWith("/")) path else "/$path"
+            val mime = if (filename.endsWith(".gif", true)) "image/gif" else "image/bmp"
+            val body = okhttp3.MultipartBody.Builder()
+                .setType(okhttp3.MultipartBody.FORM)
+                .addFormDataPart("data", filename, bytes.toRequestBody(mime.toMediaTypeOrNull()))
+                .build()
+            val request = okhttp3.Request.Builder().url("http://$ip/upload").post(body).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    android.util.Log.e("WledViewModel", "File upload failed ($path) for $ip: ${response.code}")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("WledViewModel", "File upload exception ($path) for $ip", e)
+        }
+    }
+
+    /** Replace the device's presets.json. Throws on failure so callers can report it. */
+    private suspend fun uploadPresetsJson(ip: String, jsonContent: String) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val url = "http://$ip/upload"
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+
+            val body = okhttp3.MultipartBody.Builder()
+                .setType(okhttp3.MultipartBody.FORM)
+                .addFormDataPart("data", "/presets.json", jsonContent.toRequestBody("application/json".toMediaTypeOrNull()))
+                .build()
+
+            val request = okhttp3.Request.Builder()
+                .url(url)
+                .post(body)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw Exception("Upload thất bại (HTTP ${response.code})")
+                }
+                android.util.Log.i("WledViewModel", "Upload successful for $ip")
+            }
+        }
+    }
 }
 
 data class WledEffect(val id: Int, val name: String, val vietnameseName: String)
 data class WledPalette(val id: Int, val name: String, val vietnameseName: String)
+
+/** A mock (virtual) device parsed from an imported timecode file. */
+data class TimecodeMockDevice(
+    val id: String,
+    val name: String,
+    val clipCount: Int
+)
+
+/** Per-device outcome of a timecode upload, shown in the result dialog. */
+data class TimecodeUploadResult(
+    val mockName: String,
+    val deviceName: String,
+    val deviceIp: String,
+    val clipCount: Int,
+    val success: Boolean,
+    val error: String? = null
+)
+
+/** UI state for the timecode import → mock-to-real mapping flow. */
+data class TimecodeImportUiState(
+    val showDialog: Boolean = false,
+    val mockDevices: List<TimecodeMockDevice> = emptyList(),
+    val isProcessing: Boolean = false,
+    val resultMessage: String? = null,
+    val showResult: Boolean = false,
+    val results: List<TimecodeUploadResult> = emptyList(),
+    val totalSeconds: Double = 0.0
+)
 
 data class DevicePlaylistStep(
     val presetId: Int,

@@ -14,3 +14,9 @@ val CyberGreen = Color(0xFF39FF14)
 val CyberYellow = Color(0xFFFFF01F)
 val MutedSlate = Color(0xFF64748B)
 val LightIce = Color(0xFFD6F8FF)
+
+// Glassmorphism & Glow Tokens
+val GlassSurface = Color(0xFF1A1A2E).copy(alpha = 0.55f)
+val GlassBorder = Color.White.copy(alpha = 0.12f)
+val CyberCyanGlow = Color(0xFF00F0FF).copy(alpha = 0.35f)
+val CyberMagentaGlow = Color(0xFFFF007F).copy(alpha = 0.35f)
