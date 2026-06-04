@@ -71,9 +71,11 @@ data class WledLedsInfo(
 )
 
 @JsonClass(generateAdapter = true)
+// Lưu ý: WLED trả `u`/`t` theo đơn vị KILOBYTE (KB), không phải byte.
+// (giữ tên cũ usedBytes/totalBytes để tránh đổi nhiều chỗ; hãy coi như "KB").
 data class WledFilesystemInfo(
-    @Json(name = "u") val usedBytes: Long? = null,
-    @Json(name = "t") val totalBytes: Long? = null
+    @Json(name = "u") val usedBytes: Long? = null,   // dung lượng đã dùng (KB)
+    @Json(name = "t") val totalBytes: Long? = null   // tổng dung lượng (KB)
 )
 
 @JsonClass(generateAdapter = true)
