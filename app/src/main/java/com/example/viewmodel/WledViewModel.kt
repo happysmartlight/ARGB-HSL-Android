@@ -1,10 +1,15 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.app.Activity
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
+import com.example.billing.ProSubscriptionManager
 import com.example.data.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,12 +33,40 @@ sealed class AddDeviceState {
     data class DuplicateDevice(val ip: String, val message: String) : AddDeviceState()
 }
 
+enum class PlaylistPlaybackState {
+    Idle,
+    Running,
+    Paused,
+    Completed
+}
+
 class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
     private val api = WledApi.create()
     private val repository = WledRepository(db.wledDao(), api)
     private val discoveryManager = WledDiscoveryManager(application)
+    private val proSubscriptionManager = ProSubscriptionManager(application)
+
+    val proSubscriptionState = proSubscriptionManager.state
+
+    fun refreshProSubscription() {
+        proSubscriptionManager.refresh()
+    }
+
+    fun restoreProSubscription() {
+        proSubscriptionManager.restorePurchases()
+    }
+
+    fun launchProPurchase(activity: Activity) {
+        proSubscriptionManager.launchPurchase(activity)
+    }
+
+    fun setDebugProEntitlement(enabled: Boolean) {
+        if (BuildConfig.DEBUG) {
+            proSubscriptionManager.setDebugEntitlement(enabled)
+        }
+    }
 
     private val _addDeviceState = MutableStateFlow<AddDeviceState>(AddDeviceState.Idle)
     val addDeviceState: StateFlow<AddDeviceState> = _addDeviceState.asStateFlow()
@@ -199,6 +232,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _bulkPresetDeleteState = MutableStateFlow(PresetBulkDeleteUiState())
     val bulkPresetDeleteState: StateFlow<PresetBulkDeleteUiState> = _bulkPresetDeleteState.asStateFlow()
+
+    private val _fileCleanupState = MutableStateFlow(FileCleanupUiState())
+    val fileCleanupState: StateFlow<FileCleanupUiState> = _fileCleanupState.asStateFlow()
 
     private val _onlineDevicePresetStats = MutableStateFlow<Map<Int, DevicePresetStorageStats>>(emptyMap())
     val onlineDevicePresetStats: StateFlow<Map<Int, DevicePresetStorageStats>> = _onlineDevicePresetStats.asStateFlow()
@@ -811,6 +847,132 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // TÌM & DỌN ẢNH .bmp/.gif TRÊN FILESYSTEM (chọn từng file để xóa)
+    // ---------------------------------------------------------------------------
+
+    /** Liệt kê toàn bộ file trên thiết bị qua GET /edit?list=/ rồi lọc ra .bmp/.gif. */
+    private suspend fun listDeviceImageFiles(ip: String): List<DeviceImageFile> = withContext(Dispatchers.IO) {
+        val request = okhttp3.Request.Builder()
+            .url("http://$ip/edit?list=/")
+            .build()
+        presetFileClient.newCall(request).execute().use { response ->
+            if (response.code == 401) {
+                throw Exception("WLED đang khóa PIN phần /edit, cần mở khóa trước khi liệt kê file.")
+            }
+            if (!response.isSuccessful) {
+                throw Exception("Không liệt kê được file (HTTP ${response.code})")
+            }
+            val body = response.body?.string().orEmpty()
+            val arr = try {
+                org.json.JSONArray(body)
+            } catch (e: Exception) {
+                throw Exception("Thiết bị không trả về danh sách file hợp lệ (có thể firmware không hỗ trợ /edit?list).")
+            }
+            val out = mutableListOf<DeviceImageFile>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                if (o.optString("type", "file") == "dir") continue
+                var name = o.optString("name", "").trim()
+                if (name.isBlank()) continue
+                if (!name.startsWith("/")) name = "/$name"
+                val lower = name.lowercase()
+                if (lower.endsWith(".bmp") || lower.endsWith(".gif")) {
+                    out += DeviceImageFile(path = name, sizeBytes = o.optLong("size", 0L))
+                }
+            }
+            out.sortedByDescending { it.sizeBytes }
+        }
+    }
+
+    /** Mở dialog dọn ảnh và nạp danh sách file .bmp/.gif của thiết bị. */
+    fun openDeviceFileCleanup(device: WledDevice) {
+        _fileCleanupState.value = FileCleanupUiState(
+            isVisible = true,
+            isLoading = true,
+            deviceId = device.id,
+            deviceName = device.name,
+            deviceIp = device.ipAddress
+        )
+        viewModelScope.launch {
+            try {
+                val files = listDeviceImageFiles(device.ipAddress)
+                _fileCleanupState.value = _fileCleanupState.value.copy(isLoading = false, files = files)
+            } catch (e: Exception) {
+                _fileCleanupState.value = _fileCleanupState.value.copy(
+                    isLoading = false,
+                    error = e.message ?: "Lỗi không xác định khi liệt kê file."
+                )
+            }
+        }
+    }
+
+    /** Tích/bỏ tích một file. */
+    fun toggleFileCleanupSelection(path: String) {
+        val state = _fileCleanupState.value
+        val newSelected = if (path in state.selected) state.selected - path else state.selected + path
+        _fileCleanupState.value = state.copy(selected = newSelected)
+    }
+
+    /** Chọn tất cả / bỏ chọn tất cả. */
+    fun setAllFileCleanupSelection(select: Boolean) {
+        val state = _fileCleanupState.value
+        _fileCleanupState.value = state.copy(
+            selected = if (select) state.files.map { it.path }.toSet() else emptySet()
+        )
+    }
+
+    /** Xóa các file đã tích chọn, sau đó nạp lại danh sách + cập nhật thống kê bộ nhớ. */
+    fun deleteSelectedDeviceFiles(device: WledDevice) {
+        val state = _fileCleanupState.value
+        val targets = state.files.filter { it.path in state.selected }
+        if (targets.isEmpty() || state.isDeleting) return
+        _fileCleanupState.value = state.copy(isDeleting = true, error = null, resultMessage = null)
+        viewModelScope.launch {
+            var deleted = 0
+            var failed = 0
+            var firstError: String? = null
+            withContext(Dispatchers.IO) {
+                for (f in targets) {
+                    try {
+                        deleteDeviceFile(device.ipAddress, f.path)
+                        deleted++
+                        delay(150)
+                    } catch (e: Exception) {
+                        failed++
+                        if (firstError == null) firstError = e.message
+                    }
+                }
+            }
+            log(
+                "Dọn ảnh: xóa $deleted file .bmp/.gif trên ${device.name}" + if (failed > 0) " ($failed lỗi)" else "",
+                if (failed > 0) "WARN" else "INFO"
+            )
+            val message = "Đã xóa $deleted file" + if (failed > 0) ", $failed file lỗi" else "."
+            val refreshed = try {
+                listDeviceImageFiles(device.ipAddress)
+            } catch (e: Exception) {
+                _fileCleanupState.value.files.filter { it.path !in targets.map { t -> t.path }.toSet() }
+            }
+            _fileCleanupState.value = _fileCleanupState.value.copy(
+                isDeleting = false,
+                files = refreshed,
+                selected = emptySet(),
+                resultMessage = message,
+                error = firstError
+            )
+            if (device.isOnline) refreshActiveDeviceMemoryAndPresetStats(device)
+        }
+    }
+
+    fun dismissFileCleanup() {
+        _fileCleanupState.value = FileCleanupUiState()
+    }
+
+    fun clearFileCleanupResult() {
+        _fileCleanupState.value = _fileCleanupState.value.copy(resultMessage = null, error = null)
+    }
+
     private fun presetDeleteActionLogName(action: PresetDeleteAction): String {
         return when (action) {
             PresetDeleteAction.LOGO_IMAGES -> "xóa nhóm logo/ảnh"
@@ -822,14 +984,100 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         discoveryManager.stopDiscovery()
+        proSubscriptionManager.destroy()
         stopAudio()
     }
 
     // --- STAGE MODE: SYNCHRONIZED MULTI-DEVICE CONTROL (PARALLEL) ---
-    
+
+    private data class FreezeCommandResult(
+        val deviceName: String,
+        val ipAddress: String,
+        val success: Boolean,
+        val error: String? = null
+    )
+
+    private data class FreezeCommandSummary(
+        val attempted: Int,
+        val succeeded: Int,
+        val failures: List<FreezeCommandResult>
+    )
+
+    private suspend fun setFreezeAllOnlineDevices(frozen: Boolean): FreezeCommandSummary {
+        val onlineDevices = devices.value.filter { it.isOnline }
+        if (onlineDevices.isEmpty()) {
+            return FreezeCommandSummary(attempted = 0, succeeded = 0, failures = emptyList())
+        }
+
+        val results = withContext(Dispatchers.IO) {
+            onlineDevices.map { device ->
+                async {
+                    val url = "http://${device.ipAddress}/json/state"
+                    try {
+                        val segmentIds = try {
+                            api.getState(url)
+                                .seg
+                                ?.mapNotNull { it.id }
+                                ?.distinct()
+                                ?.ifEmpty { listOf(0) }
+                                ?: listOf(0)
+                        } catch (e: Exception) {
+                            listOf(0)
+                        }
+                        val stateReq = WledStateRequest(
+                            seg = segmentIds.map { segmentId ->
+                                WledSegmentRequest(id = segmentId, frz = frozen)
+                            }
+                        )
+                        api.updateState(url, stateReq)
+                        FreezeCommandResult(
+                            deviceName = device.name,
+                            ipAddress = device.ipAddress,
+                            success = true
+                        )
+                    } catch (e: Exception) {
+                        android.util.Log.e(
+                            "WledViewModel",
+                            "Lỗi ${if (frozen) "freeze" else "unfreeze"} thiết bị ${device.ipAddress}",
+                            e
+                        )
+                        FreezeCommandResult(
+                            deviceName = device.name,
+                            ipAddress = device.ipAddress,
+                            success = false,
+                            error = e.message
+                        )
+                    }
+                }
+            }.awaitAll()
+        }
+
+        val failures = results.filterNot { it.success }
+        return FreezeCommandSummary(
+            attempted = results.size,
+            succeeded = results.size - failures.size,
+            failures = failures
+        )
+    }
+
+    private fun logFreezeWarningIfNeeded(summary: FreezeCommandSummary, context: String) {
+        if (summary.failures.isEmpty()) return
+        val failedDevices = summary.failures
+            .take(3)
+            .joinToString(", ") { "${it.deviceName} (${it.ipAddress})" }
+        val suffix = if (summary.failures.size > 3) ", ..." else ""
+        log(
+            "$context: chỉ gỡ freeze được ${summary.succeeded}/${summary.attempted} thiết bị. Lỗi: $failedDevices$suffix",
+            "WARN"
+        )
+    }
+
     fun togglePowerAll(turnOn: Boolean) {
         log("Sân khấu đồng loạt: ${if (turnOn) "BẬT TOÀN BỘ (Màu đỏ)" else "TẮT TOÀN BỘ"}", "WARN")
         viewModelScope.launch {
+            playlistFreezeJob?.join()
+            val freezeSummary = setFreezeAllOnlineDevices(false)
+            logFreezeWarningIfNeeded(freezeSummary, "Chuẩn bị ${if (turnOn) "bật" else "tắt"} toàn bộ LED")
             devices.value.forEach { device ->
                 launch {
                     if (turnOn) {
@@ -862,10 +1110,14 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun runPlaylistAll(playlistId: Int) {
-        viewModelScope.launch {
-            devices.value.forEach { device ->
-                launch {
+    private suspend fun runPlaylistAllNow(playlistId: Int) {
+        playlistFreezeJob?.join()
+        val freezeSummary = setFreezeAllOnlineDevices(false)
+        logFreezeWarningIfNeeded(freezeSummary, "Chuẩn bị chạy playlist $playlistId")
+
+        withContext(Dispatchers.IO) {
+            devices.value.map { device ->
+                async {
                     val url = "http://${device.ipAddress}/json/state"
                     try {
                         val stateReq = WledStateRequest(on = true, ps = playlistId)
@@ -877,7 +1129,13 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                         android.util.Log.e("WledViewModel", "Error running playlist $playlistId for ${device.ipAddress}", e)
                     }
                 }
-            }
+            }.awaitAll()
+        }
+    }
+
+    fun runPlaylistAll(playlistId: Int) {
+        viewModelScope.launch {
+            runPlaylistAllNow(playlistId)
         }
     }
 
@@ -1144,6 +1402,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private val _isPlaylistRunning = MutableStateFlow(false)
     val isPlaylistRunning: StateFlow<Boolean> = _isPlaylistRunning.asStateFlow()
 
+    private val _playlistPlaybackState = MutableStateFlow(PlaylistPlaybackState.Idle)
+    val playlistPlaybackState: StateFlow<PlaylistPlaybackState> = _playlistPlaybackState.asStateFlow()
+
     private val _playlistElapsedSeconds = MutableStateFlow(0f)
     val playlistElapsedSeconds: StateFlow<Float> = _playlistElapsedSeconds.asStateFlow()
 
@@ -1171,6 +1432,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var playlistTimelineJob: kotlinx.coroutines.Job? = null
+    private var playlistFreezeJob: kotlinx.coroutines.Job? = null
 
     /**
      * Fetch timelines for all online WLED devices and calculate aggregated total duration.
@@ -1455,6 +1717,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         _isPlaylistRunning.value = true
+        _playlistPlaybackState.value = PlaylistPlaybackState.Running
         _playlistElapsedSeconds.value = startFrom
         _playlistName.value = "Playlist $playlistId"
         
@@ -1462,12 +1725,6 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         
         lastSentPresetMap.clear()
         updateActiveSteps(startFrom)
-
-        // IF we are in Native Play mode (no manual seek / choreography yet), we fire
-        // the parallel native Playlist 249 command to run directly on WLED device hardware!
-        if (!_isChoreographyMode.value) {
-            runPlaylistAll(playlistId)
-        }
 
         playlistTimelineJob = viewModelScope.launch {
             var duration = manualDuration
@@ -1485,10 +1742,20 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             playlistDurationSeconds = duration!!
-            playlistStartTimeMs = System.currentTimeMillis() - (startFrom * 1000L).toLong()
 
             // Reset again to force immediate first transition load if in choreography mode
             lastSentPresetMap.clear()
+
+            if (_isChoreographyMode.value) {
+                playlistFreezeJob?.join()
+                val freezeSummary = setFreezeAllOnlineDevices(false)
+                logFreezeWarningIfNeeded(freezeSummary, "Chuẩn bị chạy tiếp bằng Biên đạo chủ động")
+            } else {
+                // Native mode lets WLED run playlist 249 on-device after any pending freeze is cleared.
+                runPlaylistAllNow(playlistId)
+            }
+
+            playlistStartTimeMs = System.currentTimeMillis() - (startFrom * 1000L).toLong()
 
             // Synchronized audio play
             playAudio()
@@ -1518,6 +1785,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 log("Đã hoàn thành kịch bản đồng bộ.", "INFO")
                 _playlistElapsedSeconds.value = _playlistTotalSeconds.value.toFloat()
                 _isPlaylistRunning.value = false
+                _playlistPlaybackState.value = PlaylistPlaybackState.Completed
                 stopAudio()
                 togglePowerAll(false)
             }
@@ -1529,6 +1797,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         playlistTimelineJob = null
         _isPlaylistRunning.value = false
         _playlistElapsedSeconds.value = 0f
+        _playlistPlaybackState.value = PlaylistPlaybackState.Idle
         _isChoreographyMode.value = false // Reset back to default WLED native playlist mode
         lastSentPresetMap.clear()
         updateActiveSteps(0f)
@@ -1538,48 +1807,47 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun pausePlaylistTimeline() {
+        if (!_isPlaylistRunning.value) return
+
         playlistTimelineJob?.cancel()
         playlistTimelineJob = null
         _isPlaylistRunning.value = false
+        _playlistPlaybackState.value = PlaylistPlaybackState.Paused
         stopAudio()
+        updateActiveSteps(_playlistElapsedSeconds.value)
         
-        // Freeze all online devices via segment 0
-        val onlineDevices = devices.value.filter { it.isOnline }
-        onlineDevices.forEach { device ->
-            viewModelScope.launch(Dispatchers.IO) {
-                val url = "http://${device.ipAddress}/json/state"
-                try {
-                    val segReq = WledSegmentRequest(id = 0, frz = true)
-                    val stateReq = WledStateRequest(seg = listOf(segReq))
-                    api.updateState(url, stateReq)
-                } catch (e: Exception) {
-                    android.util.Log.e("WledViewModel", "Lỗi tạm dừng (freeze) thiết bị ${device.ipAddress}", e)
+        playlistFreezeJob?.cancel()
+        playlistFreezeJob = viewModelScope.launch {
+            val summary = setFreezeAllOnlineDevices(true)
+            when {
+                summary.attempted == 0 -> {
+                    log("Đã tạm dừng kịch bản, nhưng hiện không có thiết bị online để freeze.", "WARN")
+                }
+                summary.failures.isEmpty() -> {
+                    log("Đã tạm dừng kịch bản liên hoàn và freeze ${summary.succeeded}/${summary.attempted} thiết bị.", "INFO")
+                }
+                else -> {
+                    val failedDevices = summary.failures
+                        .take(3)
+                        .joinToString(", ") { "${it.deviceName} (${it.ipAddress})" }
+                    val suffix = if (summary.failures.size > 3) ", ..." else ""
+                    log(
+                        "Đã tạm dừng timer, nhưng freeze chỉ thành công ${summary.succeeded}/${summary.attempted} thiết bị. Lỗi: $failedDevices$suffix",
+                        "WARN"
+                    )
                 }
             }
         }
-        
-        log("Đã tạm dừng kịch bản liên hoàn. Bấm Tiếp tục để chạy tiếp bằng Biên đạo chủ động.", "INFO")
     }
 
     fun resumePlaylistTimeline() {
-        _isChoreographyMode.value = true
-        
-        // Unfreeze all online devices via segment 0
-        val onlineDevices = devices.value.filter { it.isOnline }
-        onlineDevices.forEach { device ->
-            viewModelScope.launch(Dispatchers.IO) {
-                val url = "http://${device.ipAddress}/json/state"
-                try {
-                    val segReq = WledSegmentRequest(id = 0, frz = false)
-                    val stateReq = WledStateRequest(seg = listOf(segReq))
-                    api.updateState(url, stateReq)
-                } catch (e: Exception) {
-                    android.util.Log.e("WledViewModel", "Lỗi tiếp tục (unfreeze) thiết bị ${device.ipAddress}", e)
-                }
-            }
+        if (_playlistPlaybackState.value != PlaylistPlaybackState.Paused) {
+            startPlaylistAllWithTimeline(playlistPresetSlot)
+            return
         }
-        
-        startPlaylistAllWithTimeline(249)
+
+        _isChoreographyMode.value = true
+        startPlaylistAllWithTimeline(playlistPresetSlot)
     }
 
     /**
@@ -2157,6 +2425,26 @@ data class PresetDeletePreview(
     val presetIds: List<Int>,
     val fileRefs: List<String>,
     val protectedSlots: List<Int>
+)
+
+/** Một file ảnh (.bmp/.gif) trên filesystem của thiết bị, lấy từ GET /edit?list=/. */
+data class DeviceImageFile(
+    val path: String,        // đã chuẩn hoá có "/" đầu, ví dụ "/logo.bmp"
+    val sizeBytes: Long      // dung lượng file (byte)
+)
+
+/** State cho dialog "Tìm & dọn ảnh BMP/GIF" của một thiết bị. */
+data class FileCleanupUiState(
+    val isVisible: Boolean = false,
+    val isLoading: Boolean = false,
+    val isDeleting: Boolean = false,
+    val deviceId: Int? = null,
+    val deviceName: String? = null,
+    val deviceIp: String? = null,
+    val files: List<DeviceImageFile> = emptyList(),
+    val selected: Set<String> = emptySet(),
+    val error: String? = null,
+    val resultMessage: String? = null
 )
 
 data class PresetDeleteUiState(

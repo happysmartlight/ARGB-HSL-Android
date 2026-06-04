@@ -1,6 +1,14 @@
 package com.example.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
 import android.graphics.Color.HSVToColor
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
+import kotlin.math.sin
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -36,15 +44,23 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -54,11 +70,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.BuildConfig
+import com.example.billing.ProSubscriptionManager
+import com.example.billing.ProSubscriptionState
 import com.example.data.*
 import com.example.viewmodel.WledEffect
 import com.example.viewmodel.WledPalette
 import com.example.viewmodel.WledViewModel
 import com.example.viewmodel.AddDeviceState
+import com.example.viewmodel.DeviceImageFile
+import com.example.viewmodel.FileCleanupUiState
 import com.example.viewmodel.DevicePresetStorageStats
 import com.example.viewmodel.PresetBulkDeletePreview
 import com.example.viewmodel.PresetBulkDeleteUiState
@@ -66,6 +87,7 @@ import com.example.viewmodel.PresetDeleteAction
 import com.example.viewmodel.PresetDeviceDeleteError
 import com.example.viewmodel.PresetDeletePreview
 import com.example.viewmodel.PresetDeleteUiState
+import com.example.viewmodel.PlaylistPlaybackState
 import com.example.viewmodel.TimecodeMockDevice
 import com.example.viewmodel.TimecodeImportUiState
 import com.example.viewmodel.TimecodeUploadResult
@@ -149,7 +171,9 @@ private fun CompactAppTopBar(
     selectedDevice: WledDevice?,
     isWideScreen: Boolean,
     horizontalPadding: Dp,
+    proState: ProSubscriptionState,
     onPlayAll: () -> Unit,
+    onUpgrade: () -> Unit,
     onInfo: () -> Unit,
     onLogs: () -> Unit,
     onRefresh: () -> Unit,
@@ -226,6 +250,45 @@ private fun CompactAppTopBar(
                 iconSize = iconSize,
                 buttonSize = iconButtonSize
             )
+            if (proState.isPro) {
+                Surface(
+                    modifier = Modifier
+                        .testTag("pro_status_badge")
+                        .semantics { contentDescription = "Quản lý Pro" }
+                        .clickable(onClick = onUpgrade),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "PRO",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            maxLines = 1
+                        )
+                    }
+                }
+            } else {
+                CompactTopIconButton(
+                    onClick = onUpgrade,
+                    imageVector = Icons.Default.Star,
+                    contentDescription = "Nâng cấp Pro",
+                    modifier = Modifier.testTag("pro_upgrade_button"),
+                    iconSize = iconSize,
+                    buttonSize = iconButtonSize
+                )
+            }
             CompactTopIconButton(
                 onClick = onInfo,
                 imageVector = Icons.Default.Info,
@@ -293,7 +356,7 @@ private fun CompactControlTabRow(
     onTabSelected: (Int) -> Unit
 ) {
     val tabs = listOf(
-        "Thử Mạch Lẻ",
+        "Cấu Hình Mạch",
         "Đồng Loạt (All)",
         "Nút Custom"
     )
@@ -352,12 +415,16 @@ fun WledManagerApp(viewModel: WledViewModel) {
     val selectedDevice by viewModel.selectedDevice.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val activeDetails by viewModel.activeDeviceDetails.collectAsStateWithLifecycle()
+    val proState by viewModel.proSubscriptionState.collectAsStateWithLifecycle()
 
     var showAddDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var showLogsDialog by remember { mutableStateOf(false) }
+    var showProDialog by remember { mutableStateOf(false) }
     val systemLogs by viewModel.systemLogs.collectAsStateWithLifecycle()
     val addDeviceState by viewModel.addDeviceState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val requirePro = { showProDialog = true }
 
     // Rộng màn hình để đưa ra phân giải Responsive Master-Detail
     val configuration = LocalConfiguration.current
@@ -371,15 +438,21 @@ fun WledManagerApp(viewModel: WledViewModel) {
                 selectedDevice = selectedDevice,
                 isWideScreen = isWideScreen,
                 horizontalPadding = dimens.screenPadding,
+                proState = proState,
                 onPlayAll = {
-                    viewModel.setSelectedTab(1)
-                    if (selectedDevice == null) {
-                        val target = devices.find { it.isOnline } ?: devices.firstOrNull()
-                        if (target != null) {
-                            viewModel.selectDevice(target)
+                    if (!proState.isPro) {
+                        requirePro()
+                    } else {
+                        viewModel.setSelectedTab(1)
+                        if (selectedDevice == null) {
+                            val target = devices.find { it.isOnline } ?: devices.firstOrNull()
+                            if (target != null) {
+                                viewModel.selectDevice(target)
+                            }
                         }
                     }
                 },
+                onUpgrade = requirePro,
                 onInfo = { showInfoDialog = true },
                 onLogs = { showLogsDialog = true },
                 onRefresh = { viewModel.refreshAllDevices() },
@@ -410,6 +483,8 @@ fun WledManagerApp(viewModel: WledViewModel) {
                             onDeleteDevice = { viewModel.deleteDevice(it) },
                             onTogglePower = { dev, on -> viewModel.togglePower(dev, on) },
                             onTogglePowerAll = { on -> viewModel.togglePowerAll(on) },
+                            isPro = proState.isPro,
+                            onRequirePro = requirePro,
                             onAddDeviceClick = { showAddDialog = true },
                             onQuickAddDevice = { name, ip -> viewModel.addDevice(name, ip) }
                         )
@@ -430,7 +505,9 @@ fun WledManagerApp(viewModel: WledViewModel) {
                                 activeDetails = activeDetails,
                                 viewModel = viewModel,
                                 onBack = { viewModel.selectDevice(null) },
-                                isWideScreen = true
+                                isWideScreen = true,
+                                proState = proState,
+                                onRequirePro = requirePro
                             )
                         } else {
                             EmptyControlState()
@@ -461,6 +538,8 @@ fun WledManagerApp(viewModel: WledViewModel) {
                             onDeleteDevice = { viewModel.deleteDevice(it) },
                             onTogglePower = { dev, on -> viewModel.togglePower(dev, on) },
                             onTogglePowerAll = { on -> viewModel.togglePowerAll(on) },
+                            isPro = proState.isPro,
+                            onRequirePro = requirePro,
                             onAddDeviceClick = { showAddDialog = true },
                             onQuickAddDevice = { name, ip -> viewModel.addDevice(name, ip) }
                         )
@@ -472,13 +551,36 @@ fun WledManagerApp(viewModel: WledViewModel) {
                                 activeDetails = activeDetails,
                                 viewModel = viewModel,
                                 onBack = { viewModel.selectDevice(null) },
-                                isWideScreen = false
+                                isWideScreen = false,
+                                proState = proState,
+                                onRequirePro = requirePro
                             )
                         }
                     }
                 }
             }
         }
+    }
+
+    if (showProDialog) {
+        ProSubscriptionDialog(
+            state = proState,
+            onPurchase = {
+                val activity = context.findActivity()
+                if (activity != null) {
+                    viewModel.launchProPurchase(activity)
+                } else {
+                    android.widget.Toast
+                        .makeText(context, "Không mở được Google Play từ màn hình hiện tại.", android.widget.Toast.LENGTH_LONG)
+                        .show()
+                }
+            },
+            onRestore = { viewModel.restoreProSubscription() },
+            onRefresh = { viewModel.refreshProSubscription() },
+            onManageSubscription = { openPlaySubscriptionCenter(context) },
+            onDebugToggle = { viewModel.setDebugProEntitlement(!proState.isPro) },
+            onDismiss = { showProDialog = false }
+        )
     }
 
     if (showAddDialog) {
@@ -1154,6 +1256,8 @@ fun DeviceListSection(
     onDeleteDevice: (WledDevice) -> Unit,
     onTogglePower: (WledDevice, Boolean) -> Unit,
     onTogglePowerAll: (Boolean) -> Unit,
+    isPro: Boolean,
+    onRequirePro: () -> Unit,
     onAddDeviceClick: () -> Unit,
     onQuickAddDevice: (String, String) -> Unit
 ) {
@@ -1347,10 +1451,18 @@ fun DeviceListSection(
                         Switch(
                             checked = allOn,
                             onCheckedChange = { isChecked ->
-                                onTogglePowerAll(isChecked)
+                                if (isPro) {
+                                    onTogglePowerAll(isChecked)
+                                } else {
+                                    onRequirePro()
+                                }
                             },
                             modifier = Modifier
                                 .testTag("toggle_all_switch")
+                                .semantics {
+                                    contentDescription = "Bật tắt toàn bộ thiết bị"
+                                    stateDescription = powerLabel
+                                }
                                 .scale(0.85f)
                         )
                     }
@@ -1569,7 +1681,13 @@ fun DeviceRowCard(
                 Switch(
                     checked = device.isOn,
                     onCheckedChange = onTogglePower,
-                    modifier = Modifier.scale(0.8f).testTag("device_switch_${device.id}"),
+                    modifier = Modifier
+                        .scale(0.8f)
+                        .semantics {
+                            contentDescription = "Bật tắt ${device.name}"
+                            stateDescription = if (device.isOn) "Đang bật" else "Đang tắt"
+                        }
+                        .testTag("device_switch_${device.id}"),
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = MaterialTheme.colorScheme.primary,
                         checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
@@ -1606,28 +1724,25 @@ fun DeviceControlSection(
     activeDetails: WledResponse?,
     viewModel: WledViewModel,
     onBack: () -> Unit,
-    isWideScreen: Boolean
+    isWideScreen: Boolean,
+    proState: ProSubscriptionState,
+    onRequirePro: () -> Unit
 ) {
     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
-    val scrollState = rememberScrollState()
+    val configScrollState = rememberScrollState()
+    val allScrollState = rememberScrollState()
+    val customScrollState = rememberScrollState()
+    val scrollState = when (selectedTab) {
+        0 -> configScrollState
+        1 -> allScrollState
+        else -> customScrollState
+    }
 
-    val isPlaylistRunning by viewModel.isPlaylistRunning.collectAsStateWithLifecycle()
-    val playlistElapsedSecondsState = viewModel.playlistElapsedSeconds.collectAsStateWithLifecycle()
-    val playlistElapsedSeconds by playlistElapsedSecondsState
-    val playlistTotalSeconds by viewModel.playlistTotalSeconds.collectAsStateWithLifecycle()
-    val playlistName by viewModel.playlistName.collectAsStateWithLifecycle()
-    val playlistStepsCount by viewModel.playlistStepsCount.collectAsStateWithLifecycle()
-
-    val devicesTimelines by viewModel.devicesTimelines.collectAsStateWithLifecycle()
-    val isLoadingTimelines by viewModel.isLoadingTimelines.collectAsStateWithLifecycle()
     val devices by viewModel.devices.collectAsStateWithLifecycle()
-    val activeStepsMap by viewModel.activeStepsMap.collectAsStateWithLifecycle()
-    val isTimelineLocked by viewModel.isTimelineLocked.collectAsStateWithLifecycle()
-    val isChoreographyMode by viewModel.isChoreographyMode.collectAsStateWithLifecycle()
     val activePresetStats by viewModel.activeDevicePresetStats.collectAsStateWithLifecycle()
     val presetDeleteState by viewModel.presetDeleteState.collectAsStateWithLifecycle()
     val bulkPresetDeleteState by viewModel.bulkPresetDeleteState.collectAsStateWithLifecycle()
-    val onlinePresetStats by viewModel.onlineDevicePresetStats.collectAsStateWithLifecycle()
+    val fileCleanupState by viewModel.fileCleanupState.collectAsStateWithLifecycle()
 
     val dimens = LocalAppDimens.current
 
@@ -1635,9 +1750,6 @@ fun DeviceControlSection(
     var syncBrightnessAll by remember { mutableFloatStateOf(128f) }
     var pxPerSec by remember { mutableFloatStateOf(39.5f) }
 
-    val selectedAudioName by viewModel.selectedAudioName.collectAsStateWithLifecycle()
-    val selectedAudioUri by viewModel.selectedAudioUri.collectAsStateWithLifecycle()
-    val audioHistory by viewModel.audioHistory.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     LaunchedEffect(device.id) {
@@ -1703,6 +1815,16 @@ fun DeviceControlSection(
         onDismiss = { viewModel.dismissBulkPresetDeletionDialog() }
     )
 
+    if (fileCleanupState.isVisible) {
+        FileCleanupDialog(
+            state = fileCleanupState,
+            onToggle = { path -> viewModel.toggleFileCleanupSelection(path) },
+            onSelectAll = { select -> viewModel.setAllFileCleanupSelection(select) },
+            onDelete = { viewModel.deleteSelectedDeviceFiles(device) },
+            onDismiss = { viewModel.dismissFileCleanup() }
+        )
+    }
+
     val audioPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -1743,10 +1865,12 @@ fun DeviceControlSection(
         devices.filter { it.isOnline }.joinToString(",") { "${it.id}_${it.ipAddress}" }
     }
 
-    LaunchedEffect(syncPlaylistIdInput, onlineDevicesKey) {
-        val playlistId = syncPlaylistIdInput.toIntOrNull() ?: 249
-        kotlinx.coroutines.delay(300) // Debounce typing input
-        viewModel.fetchTimelinesForAllDevices(playlistId)
+    LaunchedEffect(selectedTab, syncPlaylistIdInput, onlineDevicesKey) {
+        if (selectedTab == 1) {
+            val playlistId = syncPlaylistIdInput.toIntOrNull() ?: 249
+            kotlinx.coroutines.delay(300) // Debounce typing input
+            viewModel.fetchTimelinesForAllDevices(playlistId)
+        }
     }
 
     LaunchedEffect(selectedTab, onlineDevicesKey) {
@@ -1840,7 +1964,7 @@ fun DeviceControlSection(
                 verticalArrangement = Arrangement.Center
             ) {
                 val (title, subtitle) = when (selectedTab) {
-                    0 -> Pair("THỬ MẠCH LẺ", "Tìm hiểu, tinh chỉnh từng thiết bị riêng lẻ")
+                    0 -> Pair("CẤU HÌNH ĐƠN MẠCH", "Test màu & xem cấu hình từng thiết bị")
                     1 -> Pair("ĐỒNG LOẠT TOÀN BỘ (All)", "Điều khiển đồng thời tất cả các mạch")
                     else -> Pair("KỊCH BẢN & NÚT CUSTOM", "Hành động tùy chỉnh toàn hệ thống")
                 }
@@ -1861,6 +1985,16 @@ fun DeviceControlSection(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+
+            // Quick device switcher — đổi nhanh sang mạch khác mà không cần Back
+            // (chỉ hiện ở các tab điều khiển 1 thiết bị, khi có nhiều hơn 1 mạch)
+            if (devices.size > 1 && selectedTab == 0) {
+                DeviceSwitcher(
+                    devices = devices,
+                    current = device,
+                    onSelect = { viewModel.selectDevice(it) }
+                )
             }
         }
 
@@ -1912,7 +2046,7 @@ fun DeviceControlSection(
                 verticalArrangement = Arrangement.spacedBy(dimens.sectionSpacing)
             ) {
                 // Master Brightness Slider (Sáng - Tắt) (Only show for single-device controlling tabs)
-                if (selectedTab != 1) {
+                if (selectedTab == 0) {
                     Card(
                         shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1925,7 +2059,7 @@ fun DeviceControlSection(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    Icon(IconLightMode, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                     Text(
                                         text = "ĐỘ SÁNG TỔNG (Master Brightness)",
                                         style = MaterialTheme.typography.labelMedium,
@@ -1955,6 +2089,25 @@ fun DeviceControlSection(
                     }
                 }
 
+                if (!proState.isPro && selectedTab != 0) {
+                    val lockedTitle = if (selectedTab == 1) {
+                        "Đồng Loạt là tính năng Pro"
+                    } else {
+                        "Nút Custom là tính năng Pro"
+                    }
+                    val lockedDescription = if (selectedTab == 1) {
+                        "Mở khóa điều khiển toàn bộ mạch, timeline biên đạo theo nhạc, import timecode và dọn preset hàng loạt."
+                    } else {
+                        "Mở khóa khu vực phím tắt/custom action để chuẩn bị các kịch bản vận hành sân khấu nhanh."
+                    }
+                    ProLockedFeaturePanel(
+                        state = proState,
+                        title = lockedTitle,
+                        description = lockedDescription,
+                        onUpgrade = onRequirePro,
+                        onRestore = { viewModel.restoreProSubscription() }
+                    )
+                } else {
                 when (selectedTab) {
                     0 -> {
                         // Current device info box
@@ -2022,7 +2175,7 @@ fun DeviceControlSection(
                                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.Star,
+                                        imageVector = IconPower,
                                         contentDescription = "Nguồn LED",
                                         modifier = Modifier.size(18.dp),
                                         tint = if (device.isOn) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
@@ -2173,9 +2326,9 @@ fun DeviceControlSection(
                             }
                         }
 
-                        // Advanced Color Sliders
+                        // Modern Color Wheel Picker (sắc độ + bão hòa trên đĩa tròn)
                         Text(
-                            text = "Bộ Trộn Màu Nâng Cao (HSV)",
+                            text = "Bộ Trộn Màu (Bánh Xe)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
@@ -2186,20 +2339,47 @@ fun DeviceControlSection(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                         ) {
                             Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(18.dp)
                             ) {
-                                // Hue Slider
-                                Column {
+                                ColorWheelPicker(
+                                    hue = hsvHue,
+                                    saturation = hsvSat,
+                                    onChange = { h, s ->
+                                        hsvHue = h
+                                        hsvSat = s
+                                        // Nếu màu đang tối thui (Value≈0) thì nâng sáng lên
+                                        // để màu vừa chọn trên bánh xe hiển thị được.
+                                        if (hsvVal <= 0.01f) hsvVal = 1f
+                                    },
+                                    onChangeFinished = {
+                                        viewModel.updateColor(device, rgbToHexFromHSV(hsvHue, hsvSat, hsvVal))
+                                    },
+                                    wheelSize = if (dimens.screenWidthDp >= 720) 280.dp else 240.dp
+                                )
+
+                                // Readout chips: Sắc độ & Bão hòa
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    ColorStatChip(label = "Sắc độ (Hue)", value = "${hsvHue.toInt()}°", modifier = Modifier.weight(1f))
+                                    ColorStatChip(label = "Bão hòa (Sat)", value = "${(hsvSat * 100).toInt()}%", modifier = Modifier.weight(1f))
+                                }
+
+                                // Value slider (độ sáng của màu) — track gradient đen → màu hiện tại
+                                Column(modifier = Modifier.fillMaxWidth()) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Text("Sắc độ (Hue)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                                        Text("${hsvHue.toInt()}°", fontWeight = FontWeight.Bold)
+                                        Text("Độ sáng màu (Value)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                        Text("${(hsvVal * 100).toInt()}%", fontWeight = FontWeight.Bold)
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
-                                    // Custom Hue Background Slider
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -2208,78 +2388,23 @@ fun DeviceControlSection(
                                             .background(
                                                 Brush.horizontalGradient(
                                                     listOf(
-                                                        Color.Red, Color.Yellow, Color.Green,
-                                                        Color.Cyan, Color.Blue, Color.Magenta, Color.Red
+                                                        Color.Black,
+                                                        Color(HSVToColor(floatArrayOf(hsvHue, hsvSat, 1f)))
                                                     )
                                                 )
                                             )
                                     )
                                     Slider(
-                                        value = hsvHue,
-                                        onValueChange = {
-                                            hsvHue = it
-                                        },
+                                        value = hsvVal,
+                                        onValueChange = { hsvVal = it },
                                         onValueChangeFinished = {
-                                            val currentHex = rgbToHexFromHSV(hsvHue, hsvSat, hsvVal)
-                                            viewModel.updateColor(device, currentHex)
+                                            viewModel.updateColor(device, rgbToHexFromHSV(hsvHue, hsvSat, hsvVal))
                                         },
-                                        valueRange = 0f..360f,
+                                        valueRange = 0f..1f,
                                         colors = SliderDefaults.colors(
                                             thumbColor = Color.White,
                                             activeTrackColor = Color.Transparent,
                                             inactiveTrackColor = Color.Transparent
-                                        )
-                                    )
-                                }
-
-                                // Saturation Slider
-                                Column {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text("Độ bão hòa (Saturation)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                                        Text("${(hsvSat * 100).toInt()}%", fontWeight = FontWeight.Bold)
-                                    }
-                                    Slider(
-                                        value = hsvSat,
-                                        onValueChange = {
-                                            hsvSat = it
-                                        },
-                                        onValueChangeFinished = {
-                                            val currentHex = rgbToHexFromHSV(hsvHue, hsvSat, hsvVal)
-                                            viewModel.updateColor(device, currentHex)
-                                        },
-                                        valueRange = 0f..1f,
-                                        colors = SliderDefaults.colors(
-                                            thumbColor = MaterialTheme.colorScheme.primary,
-                                            activeTrackColor = MaterialTheme.colorScheme.primary
-                                        )
-                                    )
-                                }
-
-                                // Value Slider
-                                Column {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text("Giá trị khối lượng (Brightness / Value)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                                        Text("${(hsvVal * 100).toInt()}%", fontWeight = FontWeight.Bold)
-                                    }
-                                    Slider(
-                                        value = hsvVal,
-                                        onValueChange = {
-                                            hsvVal = it
-                                        },
-                                        onValueChangeFinished = {
-                                            val currentHex = rgbToHexFromHSV(hsvHue, hsvSat, hsvVal)
-                                            viewModel.updateColor(device, currentHex)
-                                        },
-                                        valueRange = 0f..1f,
-                                        colors = SliderDefaults.colors(
-                                            thumbColor = MaterialTheme.colorScheme.primary,
-                                            activeTrackColor = MaterialTheme.colorScheme.primary
                                         )
                                     )
                                 }
@@ -2353,7 +2478,8 @@ fun DeviceControlSection(
                                 DeviceMemoryInfoRows(
                                     fs = activeDetails?.info?.fs,
                                     wifiSignal = activeDetails?.info?.wifi?.signal ?: device.wifiSignal,
-                                    stats = activePresetStats
+                                    stats = activePresetStats,
+                                    onFindImagesToDelete = { viewModel.openDeviceFileCleanup(device) }
                                 )
                                 
                                 val info = activeDetails?.info
@@ -2434,6 +2560,23 @@ fun DeviceControlSection(
                     }
 
                     1 -> {
+                        val isPlaylistRunning by viewModel.isPlaylistRunning.collectAsStateWithLifecycle()
+                        val playlistPlaybackState by viewModel.playlistPlaybackState.collectAsStateWithLifecycle()
+                        val playlistElapsedSecondsState = viewModel.playlistElapsedSeconds.collectAsStateWithLifecycle()
+                        val playlistElapsedSeconds by playlistElapsedSecondsState
+                        val playlistTotalSeconds by viewModel.playlistTotalSeconds.collectAsStateWithLifecycle()
+                        val playlistName by viewModel.playlistName.collectAsStateWithLifecycle()
+                        val playlistStepsCount by viewModel.playlistStepsCount.collectAsStateWithLifecycle()
+                        val devicesTimelines by viewModel.devicesTimelines.collectAsStateWithLifecycle()
+                        val isLoadingTimelines by viewModel.isLoadingTimelines.collectAsStateWithLifecycle()
+                        val activeStepsMap by viewModel.activeStepsMap.collectAsStateWithLifecycle()
+                        val isTimelineLocked by viewModel.isTimelineLocked.collectAsStateWithLifecycle()
+                        val isChoreographyMode by viewModel.isChoreographyMode.collectAsStateWithLifecycle()
+                        val onlinePresetStats by viewModel.onlineDevicePresetStats.collectAsStateWithLifecycle()
+                        val selectedAudioName by viewModel.selectedAudioName.collectAsStateWithLifecycle()
+                        val selectedAudioUri by viewModel.selectedAudioUri.collectAsStateWithLifecycle()
+                        val audioHistory by viewModel.audioHistory.collectAsStateWithLifecycle()
+
                         // Section: Synchronized Stage Controls (Multi-Device Parallel Control)
                         Text(
                             text = "ĐIỀU KHIỂN ĐỒNG LOẠT (STAGE CONTROL)",
@@ -2492,7 +2635,7 @@ fun DeviceControlSection(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                        Icon(IconLightMode, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                         Text(
                                             text = "TĂNG GIẢM SÁNG ĐỒNG LOẠT",
                                             style = MaterialTheme.typography.labelMedium,
@@ -2852,7 +2995,17 @@ fun DeviceControlSection(
                                 // Playlist ID is locked to 249 as requested
 
 
-                                if (isPlaylistRunning) {
+                                if (playlistPlaybackState == PlaylistPlaybackState.Running || playlistPlaybackState == PlaylistPlaybackState.Paused) {
+                                    val stageStatusText = if (playlistPlaybackState == PlaylistPlaybackState.Running) {
+                                        "Trạng thái: Đang phát kịch bản trình diễn tổng"
+                                    } else {
+                                        "Trạng thái: Tạm dừng kịch bản trình diễn tổng"
+                                    }
+                                    val stageStatusColor = if (playlistPlaybackState == PlaylistPlaybackState.Running) {
+                                        Color(0xFF00C853)
+                                    } else {
+                                        Color(0xFFFF9100)
+                                    }
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -2862,32 +3015,43 @@ fun DeviceControlSection(
                                             modifier = Modifier
                                                 .size(8.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFF00C853))
+                                                .background(stageStatusColor)
                                         )
                                         Text(
-                                            text = "Trạng thái: Đang phát kịch bản trình diễn tổng",
+                                            text = stageStatusText,
                                             style = MaterialTheme.typography.bodySmall,
                                             fontSize = 11.sp,
-                                            color = Color(0xFF00C853),
+                                            color = stageStatusColor,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
                                 }
 
-                                if (isPlaylistRunning) {
+                                if (playlistPlaybackState == PlaylistPlaybackState.Running || playlistPlaybackState == PlaylistPlaybackState.Paused) {
+                                    val isPausedTopControl = playlistPlaybackState == PlaylistPlaybackState.Paused
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Button(
-                                            onClick = { viewModel.startPlaylistAllWithTimeline(249, forceRestart = true) },
+                                            onClick = {
+                                                if (isPausedTopControl) {
+                                                    viewModel.resumePlaylistTimeline()
+                                                } else {
+                                                    viewModel.startPlaylistAllWithTimeline(249, forceRestart = true)
+                                                }
+                                            },
                                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                                             shape = RoundedCornerShape(12.dp),
                                             modifier = Modifier.height(52.dp).weight(1f)
                                         ) {
-                                            Icon(Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
+                                            Icon(
+                                                if (isPausedTopControl) Icons.Default.PlayArrow else Icons.Default.Refresh,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onPrimary
+                                            )
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            Text("CHẠY LẠI", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            Text(if (isPausedTopControl) "TIẾP TỤC" else "CHẠY LẠI", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                         }
 
                                         Button(
@@ -3074,7 +3238,12 @@ fun DeviceControlSection(
                                                 Switch(
                                                     checked = isTimelineLocked,
                                                     onCheckedChange = { viewModel.setTimelineLocked(it) },
-                                                    modifier = Modifier.scale(0.7f),
+                                                    modifier = Modifier
+                                                        .scale(0.7f)
+                                                        .semantics {
+                                                            contentDescription = "Khóa thước timeline"
+                                                            stateDescription = if (isTimelineLocked) "Đang khóa" else "Đang mở tua"
+                                                        },
                                                     colors = SwitchDefaults.colors(
                                                         checkedThumbColor = MaterialTheme.colorScheme.error,
                                                         checkedTrackColor = MaterialTheme.colorScheme.errorContainer,
@@ -3705,18 +3874,27 @@ fun DeviceControlSection(
                                                 val statusColor: Color
                                                 val pulseDot: Boolean
 
-                                                if (isPlaylistRunning) {
-                                                    statusText = "ĐANG DIỄN: $playlistName"
-                                                    statusColor = Color(0xFF00C853) // Vivid Green
-                                                    pulseDot = true
-                                                } else if (playlistElapsedSeconds > 0.05f) {
-                                                    statusText = "TẠM DỪNG: $playlistName"
-                                                    statusColor = Color(0xFFFF9100) // Orange
-                                                    pulseDot = true
-                                                } else {
-                                                    statusText = "SẴN SÀNG: Thước kịch bản $playlistName"
-                                                    statusColor = Color(0xFF00B0FF) // Cyber Blue
-                                                    pulseDot = false
+                                                when (playlistPlaybackState) {
+                                                    PlaylistPlaybackState.Running -> {
+                                                        statusText = "ĐANG DIỄN: $playlistName"
+                                                        statusColor = Color(0xFF00C853) // Vivid Green
+                                                        pulseDot = true
+                                                    }
+                                                    PlaylistPlaybackState.Paused -> {
+                                                        statusText = "TẠM DỪNG: $playlistName"
+                                                        statusColor = Color(0xFFFF9100) // Orange
+                                                        pulseDot = true
+                                                    }
+                                                    PlaylistPlaybackState.Completed -> {
+                                                        statusText = "HOÀN TẤT: $playlistName"
+                                                        statusColor = MaterialTheme.colorScheme.primary
+                                                        pulseDot = false
+                                                    }
+                                                    PlaylistPlaybackState.Idle -> {
+                                                        statusText = "SẴN SÀNG: Thước kịch bản $playlistName"
+                                                        statusColor = Color(0xFF00B0FF) // Cyber Blue
+                                                        pulseDot = false
+                                                    }
                                                 }
 
                                                 Box(
@@ -3865,7 +4043,6 @@ fun DeviceControlSection(
                                             Button(
                                                 onClick = {
                                                     viewModel.stopPlaylistTimeline()
-                                                    viewModel.togglePowerAll(false)
                                                 },
                                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD50000)),
                                                 shape = RoundedCornerShape(10.dp),
@@ -3878,25 +4055,31 @@ fun DeviceControlSection(
                                                 Text("TẮT HẾT LED", fontWeight = FontWeight.Bold, fontSize = 10.sp, color = Color.White)
                                             }
 
-                                            val isPaused = !isPlaylistRunning && playlistElapsedSeconds > 0.05f
+                                            val isPaused = playlistPlaybackState == PlaylistPlaybackState.Paused
                                             val buttonText = when {
-                                                isPlaylistRunning -> "TẠM DỪNG"
+                                                playlistPlaybackState == PlaylistPlaybackState.Running -> "TẠM DỪNG"
                                                 isPaused -> "TIẾP TỤC"
+                                                playlistPlaybackState == PlaylistPlaybackState.Completed -> "CHẠY LẠI"
                                                 else -> "CHẠY TIMELINE"
                                             }
                                             val buttonColor = when {
-                                                isPlaylistRunning -> Color(0xFFFF9100)
+                                                playlistPlaybackState == PlaylistPlaybackState.Running -> Color(0xFFFF9100)
                                                 else -> MaterialTheme.colorScheme.primary
                                             }
 
                                             OutlinedButton(
                                                 onClick = {
-                                                    if (isPlaylistRunning) {
-                                                        viewModel.pausePlaylistTimeline()
-                                                    } else {
-                                                        if (isPaused) {
+                                                    when (playlistPlaybackState) {
+                                                        PlaylistPlaybackState.Running -> {
+                                                            viewModel.pausePlaylistTimeline()
+                                                        }
+                                                        PlaylistPlaybackState.Paused -> {
                                                             viewModel.resumePlaylistTimeline()
-                                                        } else {
+                                                        }
+                                                        PlaylistPlaybackState.Completed -> {
+                                                            viewModel.startPlaylistAllWithTimeline(249, forceRestart = true)
+                                                        }
+                                                        PlaylistPlaybackState.Idle -> {
                                                             viewModel.startPlaylistAllWithTimeline(249)
                                                         }
                                                     }
@@ -3907,7 +4090,7 @@ fun DeviceControlSection(
                                                     .weight(1f)
                                                     .height(38.dp)
                                             ) {
-                                                if (isPlaylistRunning) {
+                                                if (playlistPlaybackState == PlaylistPlaybackState.Running) {
                                                     Row(
                                                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                                                         modifier = Modifier.size(16.dp).padding(vertical = 2.dp),
@@ -3999,93 +4182,41 @@ fun DeviceControlSection(
                             }
                         }
 
-                        // Interactive blueprint grid placeholder of sample custom shortcut buttons
-                        Text(
-                            text = "DEMO GIAO DIỆN BẢNG PHÍM LƯU SẴN",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                        )
-
-                        val sampleShortcuts = listOf(
-                            Triple("Phách Đỏ Chớp", "Đèn 1,2,3 - Chớp Đỏ (id: 2)", "F1"),
-                            Triple("Xanh Đêm Nhạc", "Toàn mạch - Gradient Biển (id: 42)", "F2"),
-                            Triple("Flash Chớp Trắng", "Chớp Strobe cực đại 0.5s", "F3"),
-                            Triple("Sóng Cuộn Cầu Vồng", "Đèn 2,3 - Cầu Vồng (id: 9)", "F4"),
-                            Triple("Bập Bùng Lửa Trại", "Toàn bộ - Đom Đóm Lửa (id: 46)", "F5"),
-                            Triple("Mờ Dần Hoàng Hôn", "Tắt toàn bộ giảm dần (transition)", "F6")
-                        )
-
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(if (dimens.screenWidthDp >= 720) 3 else 2),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(260.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        Card(
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            items(sampleShortcuts) { (name, desc, key) ->
-                                Card(
-                                    shape = RoundedCornerShape(14.dp),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)),
-                                    modifier = Modifier.fillMaxWidth().height(72.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(10.dp).fillMaxSize(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(8.dp)
-                                                        .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f), CircleShape)
-                                                )
-                                                Text(text = name, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            }
-                                            Text(text = desc, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        }
-                                        Badge(
-                                            containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f),
-                                            contentColor = MaterialTheme.colorScheme.secondary
-                                        ) {
-                                            Text(text = key, fontSize = 9.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(2.dp))
-                                        }
-                                    }
-                                }
-                            }
-                            // Quick Add custom button placeholder
-                            item {
-                                Card(
-                                    shape = RoundedCornerShape(14.dp),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)),
-                                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(72.dp)
-                                ) {
-                                    Column(
-                                        modifier = Modifier.fillMaxSize(),
-                                        verticalArrangement = Arrangement.Center,
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.secondary,
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                        Text(text = "THÊM PHÍM BẤM", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
-                                    }
-                                }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(dimens.cardPadding),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Build,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(dimens.iconSize)
+                                )
+                                Text(
+                                    text = "CHƯA CÓ PHÍM CUSTOM",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Khu vực này sẽ chỉ hiển thị các phím tắt thật sau khi có cấu hình lưu sẵn.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+                                    textAlign = TextAlign.Center
+                                )
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -4135,7 +4266,8 @@ private fun DeviceInfoRow(
 private fun DeviceMemoryInfoRows(
     fs: WledFilesystemInfo?,
     wifiSignal: Int?,
-    stats: DevicePresetStorageStats
+    stats: DevicePresetStorageStats,
+    onFindImagesToDelete: (() -> Unit)? = null
 ) {
     val usedBytes = fs?.usedBytes
     val totalBytes = fs?.totalBytes
@@ -4160,7 +4292,7 @@ private fun DeviceMemoryInfoRows(
         DeviceInfoRow(
             label = "Bộ nhớ filesystem:",
             value = if (percent != null && usedBytes != null && totalBytes != null) {
-                "$percent% (${formatDeviceBytes(usedBytes)} / ${formatDeviceBytes(totalBytes)})"
+                "$percent% (${formatDeviceStorageKb(usedBytes)} / ${formatDeviceStorageKb(totalBytes)})"
             } else {
                 "N/A"
             },
@@ -4184,9 +4316,68 @@ private fun DeviceMemoryInfoRows(
             DeviceInfoDivider()
             DeviceInfoRow(
                 label = "Dung lượng còn trống:",
-                value = formatDeviceBytes(freeBytes),
+                value = formatDeviceStorageKb(freeBytes),
                 valueColor = statusColor
             )
+        }
+
+        // Cảnh báo khi bộ nhớ filesystem chiếm > 85% — nhắc dọn ảnh/logo.
+        if (percent != null && percent >= 85) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.error.copy(alpha = 0.10f))
+                    .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.30f), RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = "BỘ NHỚ GẦN ĐẦY ($percent%)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = "Filesystem đã dùng trên 85%. Hãy dọn bớt ảnh và logo (.bmp/.gif) không còn dùng để tránh đầy bộ nhớ, lỗi lưu preset.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                    )
+                }
+            }
+        }
+
+        // Nút tìm & dọn ảnh .bmp/.gif trên thiết bị (chọn từng file để xóa).
+        if (onFindImagesToDelete != null) {
+            OutlinedButton(
+                onClick = onFindImagesToDelete,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(
+                    1.dp,
+                    if (percent != null && percent >= 85) MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                ),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (percent != null && percent >= 85) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Tìm & dọn ảnh BMP/GIF để xóa",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         DeviceInfoDivider()
@@ -4839,9 +5030,188 @@ private fun PresetDeviceErrorList(errors: List<PresetDeviceDeleteError>) {
     }
 }
 
-private fun formatDeviceBytes(bytes: Long?): String {
-    if (bytes == null) return "N/A"
+/** Định dạng kích thước file theo BYTE (file size từ /edit?list= trả về byte). */
+private fun formatFileBytes(bytes: Long): String {
     val kb = bytes / 1024.0
+    return if (kb < 1024.0) {
+        String.format(Locale.US, "%.1f KB", kb)
+    } else {
+        String.format(Locale.US, "%.2f MB", kb / 1024.0)
+    }
+}
+
+/**
+ * Dialog "Tìm & dọn ảnh BMP/GIF": liệt kê file .bmp/.gif trên thiết bị, cho tích chọn
+ * từng file rồi xóa. Dung lượng file hiển thị theo byte (khác fs.u/fs.t là KB).
+ */
+@Composable
+private fun FileCleanupDialog(
+    state: FileCleanupUiState,
+    onToggle: (String) -> Unit,
+    onSelectAll: (Boolean) -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = { if (!state.isDeleting) onDismiss() }) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 560.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Dọn ảnh BMP/GIF", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+                        state.deviceName?.let {
+                            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        }
+                    }
+                }
+
+                when {
+                    state.isLoading -> {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Text("Đang liệt kê file trên thiết bị...", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    state.error != null && state.files.isEmpty() -> {
+                        Text(state.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    state.files.isEmpty() -> {
+                        Text(
+                            text = "Không tìm thấy file .bmp/.gif nào trên thiết bị. 🎉",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                    else -> {
+                        val totalBytes = state.files.sumOf { it.sizeBytes }
+                        val selBytes = state.files.filter { it.path in state.selected }.sumOf { it.sizeBytes }
+                        val allSelected = state.selected.size == state.files.size
+
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { onSelectAll(!allSelected) }, enabled = !state.isDeleting) {
+                                Text(if (allSelected) "Bỏ chọn tất cả" else "Chọn tất cả")
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                text = "${state.files.size} file · ${formatFileBytes(totalBytes)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        LazyColumn(
+                            modifier = Modifier.weight(1f, fill = false).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(state.files, key = { it.path }) { file ->
+                                val checked = file.path in state.selected
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(
+                                            if (checked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                        )
+                                        .clickable(enabled = !state.isDeleting) { onToggle(file.path) }
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Checkbox(
+                                        checked = checked,
+                                        onCheckedChange = { if (!state.isDeleting) onToggle(file.path) }
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = file.path.removePrefix("/"),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = formatFileBytes(file.sizeBytes),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (state.selected.isNotEmpty()) {
+                            Text(
+                                text = "Sẽ xóa ${state.selected.size} file · giải phóng ~${formatFileBytes(selBytes)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+
+                if (state.resultMessage != null) {
+                    Text(state.resultMessage, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+                if (state.error != null && state.files.isNotEmpty()) {
+                    Text(state.error, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        enabled = !state.isDeleting,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Đóng")
+                    }
+                    Button(
+                        onClick = onDelete,
+                        enabled = !state.isDeleting && state.selected.isNotEmpty(),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        if (state.isDeleting) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onError)
+                        } else {
+                            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Xóa đã chọn")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Định dạng dung lượng filesystem của WLED. Lưu ý: WLED trả về `info.fs.u` và
+ * `info.fs.t` ĐÃ ở đơn vị kilobyte (KB), nên ở đây nhận thẳng KB (không chia 1024 nữa).
+ */
+private fun formatDeviceStorageKb(kiloBytes: Long?): String {
+    if (kiloBytes == null) return "N/A"
+    val kb = kiloBytes.toDouble()
     return if (kb < 1024.0) {
         String.format(Locale.US, "%.0f KB", kb)
     } else {
@@ -4910,6 +5280,297 @@ fun InfoRow(label: String, value: String) {
     ) {
         Text(text = label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
         Text(text = value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ProLockedFeaturePanel(
+    state: ProSubscriptionState,
+    title: String,
+    description: String,
+    onUpgrade: () -> Unit,
+    onRestore: () -> Unit
+) {
+    val dimens = LocalAppDimens.current
+
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("pro_locked_panel")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(dimens.cardPadding),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(dimens.iconSize)
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Black,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                textAlign = TextAlign.Center
+            )
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Text(
+                    text = state.priceText,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Black
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onRestore,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Khôi phục")
+                }
+                Button(
+                    onClick = onUpgrade,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Nâng cấp")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProSubscriptionDialog(
+    state: ProSubscriptionState,
+    onPurchase: () -> Unit,
+    onRestore: () -> Unit,
+    onRefresh: () -> Unit,
+    onManageSubscription: () -> Unit,
+    onDebugToggle: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val dimens = LocalAppDimens.current
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(dimens.cardPadding),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = if (state.isPro) Icons.Default.CheckCircle else Icons.Default.Star,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (state.isPro) "ARGB HSL Pro đang hoạt động" else "Nâng cấp ARGB HSL Pro",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Gói theo năm cho điều khiển đồng loạt và biên đạo nhiều mạch.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Đóng")
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "Pro hằng năm",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = state.productId,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.62f)
+                            )
+                        }
+                        Text(
+                            text = state.priceText,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProBenefitRow("Điều khiển bật/tắt, màu, hiệu ứng và độ sáng cho tất cả mạch cùng lúc.")
+                    ProBenefitRow("Import timecode, bake preset, playlist 249 và timeline đồng bộ theo nhạc.")
+                    ProBenefitRow("Dọn preset hàng loạt để chuẩn bị show mới nhanh hơn.")
+                }
+
+                val messageColor = if (state.errorMessage != null) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                }
+                val messageText = state.errorMessage ?: state.statusMessage
+                if (!messageText.isNullOrBlank()) {
+                    Text(
+                        text = messageText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = messageColor
+                    )
+                }
+
+                if (state.isLoading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onRestore,
+                        enabled = !state.isLoading,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Khôi phục")
+                    }
+                    Button(
+                        onClick = onPurchase,
+                        enabled = state.canBuy && !state.isLoading,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.ShoppingCart, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (state.isPro) "Đã Pro" else "Mua Pro")
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onRefresh, enabled = !state.isLoading) {
+                        Text("Tải lại Billing")
+                    }
+                    TextButton(onClick = onManageSubscription) {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("Quản lý trên Play")
+                    }
+                }
+
+                if (BuildConfig.DEBUG) {
+                    OutlinedButton(
+                        onClick = onDebugToggle,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (state.isPro) "Tắt Pro debug" else "Bật Pro debug")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProBenefitRow(text: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.CheckCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .padding(top = 1.dp)
+                .size(16.dp)
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+private fun openPlaySubscriptionCenter(context: Context) {
+    val uri = Uri.parse(
+        "https://play.google.com/store/account/subscriptions" +
+            "?sku=${ProSubscriptionManager.PRO_PRODUCT_ID}&package=${context.packageName}"
+    )
+    val intent = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
+        .onFailure {
+            android.widget.Toast
+                .makeText(context, "Không mở được trang quản lý subscription.", android.widget.Toast.LENGTH_LONG)
+                .show()
+        }
+}
+
+private fun Context.findActivity(): Activity? {
+    return when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
     }
 }
 
@@ -5061,9 +5722,260 @@ fun TimelineStepItem(
 }
 
 // Helpers
+// --- Material icons không có trong bộ icons.core (tự dựng từ vector path chính thức,
+// tránh phải kéo cả thư viện material-icons-extended nặng cho vài icon). ---
+private fun materialPathIcon(name: String, pathStr: String): ImageVector =
+    ImageVector.Builder(
+        name = name,
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
+    ).apply {
+        addPath(pathData = addPathNodes(pathStr), fill = SolidColor(Color.Black))
+    }.build()
+
+private val IconPower: ImageVector by lazy {
+    materialPathIcon(
+        "PowerSettingsNew",
+        "M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42C17.99 7.86 19 9.81 19 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.19 1.01-4.14 2.58-5.42L6.17 5.17C4.23 6.82 3 9.26 3 12c0 4.97 4.03 9 9 9s9-4.03 9-9c0-2.74-1.23-5.18-3.17-6.83z"
+    )
+}
+
+private val IconLightMode: ImageVector by lazy {
+    materialPathIcon(
+        "LightMode",
+        "M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"
+    )
+}
+
+private val IconUnfoldMore: ImageVector by lazy {
+    materialPathIcon(
+        "UnfoldMore",
+        "M12 5.83L15.17 9l1.41-1.41L12 3 7.41 7.59 8.83 9 12 5.83zm0 12.34L8.83 15l-1.41 1.41L12 21l4.59-4.59L15.17 15 12 18.17z"
+    )
+}
+
 fun rgbToHexFromHSV(h: Float, s: Float, v: Float): String {
     val intColor = HSVToColor(floatArrayOf(h, s, v))
     return String.format("#%02X%02X%02X", (intColor shr 16) and 0xFF, (intColor shr 8) and 0xFF, intColor and 0xFF)
+}
+
+/**
+ * Bánh xe màu hiện đại (HSV wheel) như app đèn thông minh.
+ * Góc trên đĩa = Sắc độ (Hue), bán kính tính từ tâm = Độ bão hòa (Saturation).
+ * Kéo/chạm để chọn; [onChange] bắn liên tục khi kéo, [onChangeFinished] khi nhả tay
+ * (để gọi network 1 lần, tránh spam thiết bị WLED).
+ *
+ * @param value chỉ dùng để làm tối overlay cho khớp độ sáng màu — không thay đổi value.
+ */
+@Composable
+private fun ColorWheelPicker(
+    hue: Float,
+    saturation: Float,
+    onChange: (hue: Float, sat: Float) -> Unit,
+    onChangeFinished: () -> Unit,
+    modifier: Modifier = Modifier,
+    wheelSize: Dp = 240.dp
+) {
+    val density = LocalDensity.current
+    val radiusPx = with(density) { wheelSize.toPx() } / 2f
+
+    // Coroutine của pointerInput(Unit) sống dai (không restart). rememberUpdatedState giữ
+    // một State ổn định nhưng luôn trỏ tới lambda MỚI NHẤT, nên dù khối gesture cũ vẫn
+    // chạy, nó vẫn ghi vào đúng state hiện hành sau khi màu được đồng bộ lại từ thiết bị.
+    val currentOnChange by rememberUpdatedState(onChange)
+    val currentOnFinished by rememberUpdatedState(onChangeFinished)
+
+    // Sắc độ chạy quanh đĩa theo chiều kim đồng hồ (khớp atan2 với hệ toạ độ y hướng xuống).
+    val hueColors = listOf(
+        Color.Red, Color.Yellow, Color.Green,
+        Color.Cyan, Color.Blue, Color.Magenta, Color.Red
+    )
+    val thumbColor = Color(HSVToColor(floatArrayOf(hue, saturation, 1f)))
+
+    // Cập nhật hue/sat từ vị trí chạm (px, gốc trái-trên của Canvas).
+    fun update(pos: Offset) {
+        val dx = pos.x - radiusPx
+        val dy = pos.y - radiusPx
+        val sat = (hypot(dx, dy) / radiusPx).coerceIn(0f, 1f)
+        var ang = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
+        if (ang < 0f) ang += 360f
+        currentOnChange(ang, sat)
+    }
+
+    Box(
+        modifier = modifier
+            .size(wheelSize)
+            .pointerInput(Unit) {
+                // Một gesture duy nhất: chạm xuống → cập nhật ngay; di chuyển → kéo mượt
+                // liên tục; nhả tay → gọi network 1 lần. Không dùng touch-slop nên kéo
+                // ăn ngay từ pixel đầu tiên.
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    update(down.position)
+                    down.consume()
+                    var pointerUp = false
+                    while (!pointerUp) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                            ?: event.changes.firstOrNull()
+                        if (change != null && change.pressed) {
+                            update(change.position)
+                            change.consume()
+                        } else {
+                            pointerUp = true
+                        }
+                    }
+                    currentOnFinished()
+                }
+            }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val r = size.minDimension / 2f
+
+            // 1) Vành sắc độ
+            drawCircle(
+                brush = Brush.sweepGradient(hueColors, center = center),
+                radius = r,
+                center = center
+            )
+            // 2) Độ bão hòa: trắng ở tâm, mờ dần ra rìa
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White, Color.Transparent),
+                    center = center,
+                    radius = r
+                ),
+                radius = r,
+                center = center
+            )
+            // 4) Viền mảnh cho gọn
+            drawCircle(
+                color = Color.White.copy(alpha = 0.15f),
+                radius = r,
+                center = center,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+            )
+
+            // 5) Con trỏ (thumb)
+            val ang = Math.toRadians(hue.toDouble())
+            val tr = saturation.coerceIn(0f, 1f) * r
+            val tx = center.x + (tr * cos(ang)).toFloat()
+            val ty = center.y + (tr * sin(ang)).toFloat()
+            drawCircle(color = Color.Black.copy(alpha = 0.25f), radius = 13.dp.toPx(), center = Offset(tx, ty))
+            drawCircle(color = Color.White, radius = 11.dp.toPx(), center = Offset(tx, ty))
+            drawCircle(color = thumbColor, radius = 8.dp.toPx(), center = Offset(tx, ty))
+        }
+    }
+}
+
+/** Ô hiển thị giá trị màu (Sắc độ / Bão hòa) gọn dưới bánh xe. */
+@Composable
+private fun ColorStatChip(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Black,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+/**
+ * Nút đổi nhanh thiết bị ngay trên header — bấm mở danh sách các mạch để chuyển
+ * mà không cần Back ra màn danh sách (tối ưu cho màn dọc 9:16).
+ */
+@Composable
+private fun DeviceSwitcher(
+    devices: List<WledDevice>,
+    current: WledDevice,
+    onSelect: (WledDevice) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+            modifier = Modifier.clickable { expanded = true }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(if (current.isOnline) Color(0xFF4CAF50) else Color(0xFFF44336))
+                )
+                Text(
+                    text = current.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 120.dp)
+                )
+                Icon(
+                    imageVector = IconUnfoldMore,
+                    contentDescription = "Đổi thiết bị",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            devices.forEach { d ->
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(if (d.isOnline) Color(0xFF4CAF50) else Color(0xFFF44336))
+                            )
+                            Text(
+                                text = d.name,
+                                fontWeight = if (d.id == current.id) FontWeight.Bold else FontWeight.Normal
+                            )
+                            if (d.id == current.id) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(d)
+                    }
+                )
+            }
+        }
+    }
 }
 
 fun formatTimestamp(timestamp: Long): String {
