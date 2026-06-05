@@ -12,6 +12,7 @@ plugins {
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
+  ndkVersion = "28.2.13676358"
 
   val releaseSigningProperties = Properties().apply {
     val localSigningFile = rootProject.file("release-signing.local.properties")
@@ -27,8 +28,8 @@ android {
     applicationId = "com.happysmartlight.argb"
     minSdk = 24
     targetSdk = 36
-    versionCode = 5
-    versionName = "1.1"
+    versionCode = 6
+    versionName = "1.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
