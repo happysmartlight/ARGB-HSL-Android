@@ -5438,11 +5438,6 @@ private fun ProSubscriptionDialog(
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold
                             )
-                            Text(
-                                text = state.productId,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.62f)
-                            )
                         }
                         Text(
                             text = state.priceText,
