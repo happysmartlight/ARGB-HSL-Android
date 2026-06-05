@@ -5452,6 +5452,12 @@ private fun ProSubscriptionDialog(
                     }
                 }
 
+                Text(
+                    text = "Gói Pro tự động gia hạn hằng năm qua Google Play. Bạn có thể hủy bất cứ lúc nào trong Play Store và tiếp tục dùng Pro đến hết kỳ đã thanh toán.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                )
+
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ProBenefitRow("Điều khiển bật/tắt, màu, hiệu ứng và độ sáng cho tất cả mạch cùng lúc.")
                     ProBenefitRow("Import timecode, bake preset, playlist 249 và timeline đồng bộ theo nhạc.")
