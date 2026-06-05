@@ -24,7 +24,7 @@ android {
     System.getenv(name) ?: releaseSigningProperties.getProperty(name)
 
   defaultConfig {
-    applicationId = "com.aistudio.wledmanager.qpxzks"
+    applicationId = "com.happysmartlight.argb"
     minSdk = 24
     targetSdk = 36
     versionCode = 2
