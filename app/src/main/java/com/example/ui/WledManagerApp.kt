@@ -955,7 +955,7 @@ fun WledManagerApp(viewModel: WledViewModel) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "v1.2.0 (Premium VN)",
+                                text = "v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE}) Premium VN",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -993,6 +993,43 @@ fun WledManagerApp(viewModel: WledViewModel) {
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        // --- Kênh Zalo OA (QR bấm được) ---
+                        val zaloContext = LocalContext.current
+                        val openZalo = {
+                            runCatching {
+                                zaloContext.startActivity(
+                                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://zalo.me/1321084611356589870"))
+                                )
+                            }
+                            Unit
+                        }
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Kênh Zalo OA — quét mã để kết nối:",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Image(
+                                painter = painterResource(com.example.R.drawable.zalo_oa_qr),
+                                contentDescription = "Mã QR Zalo OA Happy Smart Light",
+                                modifier = Modifier
+                                    .size(168.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(onClick = openZalo)
+                            )
+                            Text(
+                                text = "👉 Mở Zalo OA",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable(onClick = openZalo)
                             )
                         }
 
@@ -2562,6 +2599,9 @@ fun DeviceControlSection(
                     1 -> {
                         val isPlaylistRunning by viewModel.isPlaylistRunning.collectAsStateWithLifecycle()
                         val playlistPlaybackState by viewModel.playlistPlaybackState.collectAsStateWithLifecycle()
+                        val btRemoteEnabled by viewModel.btRemoteEnabled.collectAsStateWithLifecycle()
+                        val btRemoteKeyCode by viewModel.btRemoteKeyCode.collectAsStateWithLifecycle()
+                        val btRemoteLearning by viewModel.btRemoteLearning.collectAsStateWithLifecycle()
                         val playlistElapsedSecondsState = viewModel.playlistElapsedSeconds.collectAsStateWithLifecycle()
                         val playlistElapsedSeconds by playlistElapsedSecondsState
                         val playlistTotalSeconds by viewModel.playlistTotalSeconds.collectAsStateWithLifecycle()
@@ -3075,6 +3115,104 @@ fun DeviceControlSection(
                                         Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text("CHẠY PLAYLIST TỔNG CHOREOGRAPHY", fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                                    }
+                                }
+
+                                // --- Nút bấm Bluetooth (HID) điều khiển Play từ xa ---
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                    )
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "🎛️ Nút bấm Bluetooth",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Switch(
+                                                checked = btRemoteEnabled,
+                                                onCheckedChange = { viewModel.setBtRemoteEnabled(it) }
+                                            )
+                                        }
+
+                                        if (btRemoteEnabled) {
+                                            val keyAssigned = btRemoteKeyCode >= 0
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .clip(CircleShape)
+                                                        .background(if (keyAssigned) Color(0xFF00C853) else Color(0xFFFF9100))
+                                                )
+                                                Text(
+                                                    text = if (keyAssigned)
+                                                        "Đã sẵn sàng · phím: ${viewModel.btKeyLabel(btRemoteKeyCode)}"
+                                                    else
+                                                        "Chưa gán phím",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (keyAssigned) Color(0xFF00C853) else Color(0xFFFF9100)
+                                                )
+                                            }
+
+                                            Text(
+                                                text = if (btRemoteLearning)
+                                                    "Hãy bấm nút trên remote ngay bây giờ…"
+                                                else
+                                                    "Ghép nối remote trong Cài đặt Bluetooth của Android trước, rồi bấm \"Học phím\" và nhấn nút trên remote.\n• 1 nhấn: Phát / Tạm dừng / Tiếp tục\n• Nhấn đúp: Dừng hẳn\n• Giữ lâu: Chạy lại từ đầu",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = if (btRemoteLearning) MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Button(
+                                                    onClick = {
+                                                        if (btRemoteLearning) viewModel.cancelBtRemoteLearning()
+                                                        else viewModel.startBtRemoteLearning()
+                                                    },
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.weight(1f).height(44.dp)
+                                                ) {
+                                                    Text(
+                                                        if (btRemoteLearning) "Đang chờ… (Huỷ)" else "Học phím",
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                }
+                                                OutlinedButton(
+                                                    onClick = { viewModel.triggerRemoteAction() },
+                                                    enabled = keyAssigned,
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.weight(1f).height(44.dp)
+                                                ) {
+                                                    Text("Test kích hoạt", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                }
+                                            }
+
+                                            if (keyAssigned) {
+                                                TextButton(onClick = { viewModel.clearBtRemoteKey() }) {
+                                                    Text("Xoá phím đã gán", fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 

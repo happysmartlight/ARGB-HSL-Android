@@ -75,6 +75,109 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         _addDeviceState.value = AddDeviceState.Idle
     }
 
+    // ---- Nút bấm Bluetooth (HID) điều khiển Play từ xa ----
+    private val btRemotePrefs by lazy {
+        getApplication<Application>()
+            .getSharedPreferences("wled_bt_remote_prefs", android.content.Context.MODE_PRIVATE)
+    }
+
+    private val _btRemoteEnabled = MutableStateFlow(false)
+    val btRemoteEnabled: StateFlow<Boolean> = _btRemoteEnabled.asStateFlow()
+
+    /** Mã phím (KeyEvent keyCode) đã gán; -1 = chưa gán. */
+    private val _btRemoteKeyCode = MutableStateFlow(-1)
+    val btRemoteKeyCode: StateFlow<Int> = _btRemoteKeyCode.asStateFlow()
+
+    /** Đang ở chế độ "Học phím": chờ người dùng bấm remote để ghi mã phím. */
+    private val _btRemoteLearning = MutableStateFlow(false)
+    val btRemoteLearning: StateFlow<Boolean> = _btRemoteLearning.asStateFlow()
+
+    init {
+        _btRemoteEnabled.value = btRemotePrefs.getBoolean("enabled", false)
+        _btRemoteKeyCode.value = btRemotePrefs.getInt("keycode", -1)
+    }
+
+    fun setBtRemoteEnabled(enabled: Boolean) {
+        _btRemoteEnabled.value = enabled
+        btRemotePrefs.edit().putBoolean("enabled", enabled).apply()
+        if (!enabled) _btRemoteLearning.value = false
+    }
+
+    fun startBtRemoteLearning() {
+        _btRemoteLearning.value = true
+    }
+
+    fun cancelBtRemoteLearning() {
+        _btRemoteLearning.value = false
+    }
+
+    /**
+     * MainActivity gọi khi đang ở chế độ học và nhận được một phím.
+     * Trả về true nếu đã ghi nhận (đang học), để Activity nuốt sự kiện.
+     */
+    fun onBtRemoteKeyLearned(keyCode: Int): Boolean {
+        if (!_btRemoteLearning.value) return false
+        _btRemoteKeyCode.value = keyCode
+        _btRemoteLearning.value = false
+        btRemotePrefs.edit().putInt("keycode", keyCode).apply()
+        log("Đã gán nút Bluetooth: phím \"${btKeyLabel(keyCode)}\" (code $keyCode).", "INFO")
+        return true
+    }
+
+    fun clearBtRemoteKey() {
+        _btRemoteKeyCode.value = -1
+        btRemotePrefs.edit().remove("keycode").apply()
+    }
+
+    /** Tên hiển thị thân thiện cho một keyCode. */
+    fun btKeyLabel(code: Int): String {
+        if (code < 0) return "Chưa gán"
+        val raw = android.view.KeyEvent.keyCodeToString(code) // ví dụ "KEYCODE_VOLUME_UP"
+        return raw.removePrefix("KEYCODE_").replace('_', ' ')
+            .lowercase().replaceFirstChar { it.uppercase() }
+    }
+
+    /**
+     * Hành động "1 nút thông minh" cho nút bấm từ xa:
+     * đang chạy → Tạm dừng; đang pause → Tiếp tục; còn lại → Phát từ đầu.
+     * Trả về mô tả ngắn để Activity hiển thị toast.
+     */
+    fun triggerRemoteAction(): String {
+        return when (_playlistPlaybackState.value) {
+            PlaylistPlaybackState.Running -> {
+                pausePlaylistTimeline(); "Tạm dừng"
+            }
+            PlaylistPlaybackState.Paused -> {
+                resumePlaylistTimeline(); "Tiếp tục"
+            }
+            else -> {
+                startPlaylistAllWithTimeline(playlistPresetSlot, forceRestart = true); "Phát từ đầu"
+            }
+        }.also { log("Nút Bluetooth: $it.", "INFO") }
+    }
+
+    /** Cử chỉ trên 1 nút A/B Shutter. */
+    enum class RemoteGesture { SINGLE, DOUBLE, LONG }
+
+    /**
+     * Ánh xạ cử chỉ → hành động:
+     * - SINGLE: Phát / Tạm dừng / Tiếp tục (thông minh theo trạng thái)
+     * - DOUBLE: Dừng hẳn (tắt LED)
+     * - LONG:   Chạy lại từ đầu
+     * Trả về mô tả ngắn để Activity hiển thị toast.
+     */
+    fun triggerRemoteGesture(gesture: RemoteGesture): String = when (gesture) {
+        RemoteGesture.SINGLE -> triggerRemoteAction()
+        RemoteGesture.DOUBLE -> {
+            stopPlaylistTimeline()
+            "Dừng hẳn".also { log("Nút Bluetooth (nhấn đúp): $it.", "INFO") }
+        }
+        RemoteGesture.LONG -> {
+            startPlaylistAllWithTimeline(playlistPresetSlot, forceRestart = true)
+            "Chạy lại từ đầu".also { log("Nút Bluetooth (giữ lâu): $it.", "INFO") }
+        }
+    }
+
     private val logDao = db.systemLogDao()
     val systemLogs: StateFlow<List<SystemLog>> = logDao.getAllLogs()
         .stateIn(
