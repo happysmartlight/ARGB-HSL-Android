@@ -27,7 +27,7 @@ android {
     applicationId = "com.happysmartlight.argb"
     minSdk = 24
     targetSdk = 36
-    versionCode = 3
+    versionCode = 4
     versionName = "1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -82,6 +82,11 @@ secrets {
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
+  constraints {
+    implementation("androidx.fragment:fragment:1.8.9") {
+      because("Google Play flags older transitive Fragment versions from Play Services as outdated.")
+    }
+  }
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)
