@@ -6,7 +6,7 @@ Ngay trong app đã thêm Play Billing cho gói Pro hằng năm. Các mục dư�
 
 - Vào Play Console > Monetize with Play > Products > Subscriptions.
 - Tạo subscription ID: `argb_hsl_pro`.
-- Tạo base plan ID: `annual_auto`.
+- Tạo base plan ID: `annual-auto`.
 - Loại base plan: auto-renewing.
 - Chu kỳ: yearly.
 - Giá chính: `79.00 USD/year`, sau đó kiểm tra giá quy đổi theo từng quốc gia.
@@ -66,7 +66,7 @@ Nguồn Google: chính sách subscription yêu cầu không gây hiểu lầm v�
 ## Rủi ro cần xử lý trước public launch
 
 - Entitlement Pro hiện được kiểm tra bằng Play Billing client trong app. Cách này đủ để test/internal rollout, nhưng bản public nên thêm backend verify purchase token bằng Google Play Developer API và Real-time Developer Notifications để chống giả mạo tốt hơn.
-- Nếu Play Console chưa activate `argb_hsl_pro` + `annual_auto`, app sẽ hiển thị lỗi chưa tìm thấy subscription và nút mua bị khóa.
+- Nếu Play Console chưa activate `argb_hsl_pro` + `annual-auto`, app sẽ hiển thị lỗi chưa tìm thấy subscription và nút mua bị khóa.
 - Nếu app cần chạy trên mạng không có Google Play Store, Billing sẽ báo unavailable; tính năng điều khiển từng mạch vẫn dùng được.
 
 ## Tài liệu Google đã đối chiếu

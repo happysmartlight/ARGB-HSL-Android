@@ -36,7 +36,7 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
 
     companion object {
         const val PRO_PRODUCT_ID = "argb_hsl_pro"
-        const val PRO_ANNUAL_BASE_PLAN_ID = "annual_auto"
+        const val PRO_ANNUAL_BASE_PLAN_ID = "annual-auto"
         const val DEFAULT_PRICE_TEXT = "$79.00/year"
 
         private const val PREFS = "argb_hsl_subscription"
