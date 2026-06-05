@@ -1721,7 +1721,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         _playlistElapsedSeconds.value = startFrom
         _playlistName.value = "Playlist $playlistId"
         
-        log("Bắt đầu chạy kịch bản đồng bộ từ giây: ${String.format("%.1f", startFrom)}s", "INFO")
+        log("Bắt đầu chạy kịch bản đồng bộ từ giây: ${String.format(java.util.Locale.US, "%.1f", startFrom)}s", "INFO")
         
         lastSentPresetMap.clear()
         updateActiveSteps(startFrom)

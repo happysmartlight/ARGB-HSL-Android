@@ -2967,7 +2967,7 @@ fun DeviceControlSection(
                                                             val minutes = historyItem.duration / 60
                                                             val seconds = historyItem.duration % 60
                                                             Text(
-                                                                text = String.format("%d:%02d", minutes, seconds),
+                                                                text = String.format(Locale.US, "%d:%02d", minutes, seconds),
                                                                 style = MaterialTheme.typography.bodySmall,
                                                                 fontSize = 10.sp,
                                                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
@@ -3091,7 +3091,7 @@ fun DeviceControlSection(
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                                         )
-                                        val minSecString = String.format("%02d:%02d", playlistTotalSeconds / 60, playlistTotalSeconds % 60)
+                                        val minSecString = String.format(Locale.US, "%02d:%02d", playlistTotalSeconds / 60, playlistTotalSeconds % 60)
                                         Text(
                                             text = "$playlistTotalSeconds giây ($minSecString)",
                                             style = MaterialTheme.typography.labelMedium,
@@ -3955,8 +3955,8 @@ fun DeviceControlSection(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
-                                                val elString = String.format("%02d:%04.1f", (playlistElapsedSeconds.toInt() / 60), (playlistElapsedSeconds % 60f))
-                                                val totString = String.format("%02d:%02d", playlistTotalSeconds / 60, playlistTotalSeconds % 60)
+                                                val elString = String.format(Locale.US, "%02d:%04.1f", (playlistElapsedSeconds.toInt() / 60), (playlistElapsedSeconds % 60f))
+                                                val totString = String.format(Locale.US, "%02d:%02d", playlistTotalSeconds / 60, playlistTotalSeconds % 60)
                                                 Text(
                                                     text = "Đã chạy: $elString",
                                                     style = MaterialTheme.typography.bodySmall,
@@ -4009,14 +4009,14 @@ fun DeviceControlSection(
                                                     
                                                     Column(horizontalAlignment = Alignment.End) {
                                                         Text(
-                                                            text = String.format("%.1f Giây còn lại", details.remainingDuration),
+                                                            text = String.format(Locale.US, "%.1f Giây còn lại", details.remainingDuration),
                                                             style = MaterialTheme.typography.bodySmall,
                                                             fontWeight = FontWeight.Black,
                                                             fontSize = 11.sp,
                                                             color = Color(0xFF00C853)
                                                         )
                                                         Text(
-                                                            text = String.format("Đã chạy %.1f / %.1f s", details.elapsedInStep, details.totalDuration),
+                                                            text = String.format(Locale.US, "Đã chạy %.1f / %.1f s", details.elapsedInStep, details.totalDuration),
                                                             style = MaterialTheme.typography.bodySmall,
                                                             fontSize = 9.sp,
                                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
@@ -5758,7 +5758,7 @@ private val IconUnfoldMore: ImageVector by lazy {
 
 fun rgbToHexFromHSV(h: Float, s: Float, v: Float): String {
     val intColor = HSVToColor(floatArrayOf(h, s, v))
-    return String.format("#%02X%02X%02X", (intColor shr 16) and 0xFF, (intColor shr 8) and 0xFF, intColor and 0xFF)
+    return String.format(Locale.US, "#%02X%02X%02X", (intColor shr 16) and 0xFF, (intColor shr 8) and 0xFF, intColor and 0xFF)
 }
 
 /**
@@ -6183,7 +6183,7 @@ fun TimecodeResultDialog(
     val accent = if (allOk) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary
 
     val totalSec = state.totalSeconds.toInt()
-    val durationText = String.format("%02d:%02d", totalSec / 60, totalSec % 60)
+    val durationText = String.format(Locale.US, "%02d:%02d", totalSec / 60, totalSec % 60)
 
     Dialog(onDismissRequest = onDismiss) {
         Card(

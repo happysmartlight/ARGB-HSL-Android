@@ -1,4 +1,5 @@
 import java.io.File
+import java.util.Properties
 
 plugins {
   alias(libs.plugins.android.application)
@@ -12,6 +13,16 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  val releaseSigningProperties = Properties().apply {
+    val localSigningFile = rootProject.file("release-signing.local.properties")
+    if (localSigningFile.exists()) {
+      localSigningFile.inputStream().use(::load)
+    }
+  }
+
+  fun releaseSigningValue(name: String): String? =
+    System.getenv(name) ?: releaseSigningProperties.getProperty(name)
+
   defaultConfig {
     applicationId = "com.aistudio.wledmanager.qpxzks"
     minSdk = 24
@@ -24,11 +35,11 @@ android {
 
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+      val keystorePath = releaseSigningValue("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      storePassword = releaseSigningValue("STORE_PASSWORD")
+      keyAlias = releaseSigningValue("KEY_ALIAS") ?: "upload"
+      keyPassword = releaseSigningValue("KEY_PASSWORD")
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")

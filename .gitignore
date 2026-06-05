@@ -15,6 +15,9 @@
 .cxx
 local.properties
 .env
+*.jks
+*.keystore
+release-signing*.properties
+upload-key*.txt
 debug.keystore
 .build-outputs/
-
