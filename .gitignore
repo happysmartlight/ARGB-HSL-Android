@@ -8,6 +8,8 @@
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
+/.idea/appInsightsSettings.xml
+/.idea/inspectionProfiles/
 .DS_Store
 /build
 /captures
@@ -21,3 +23,4 @@ release-signing*.properties
 upload-key*.txt
 debug.keystore
 .build-outputs/
+/artifacts/
