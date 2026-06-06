@@ -398,9 +398,17 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
         }
     }
 
-    private fun ProductDetails.annualOffer() =
-        subscriptionOfferDetails?.firstOrNull { it.basePlanId == PRO_ANNUAL_BASE_PLAN_ID }
-            ?: subscriptionOfferDetails?.firstOrNull()
+    private fun ProductDetails.annualOffer(): ProductDetails.SubscriptionOfferDetails? {
+        val offers = subscriptionOfferDetails.orEmpty()
+        val forBasePlan = offers.filter { it.basePlanId == PRO_ANNUAL_BASE_PLAN_ID }
+        // Google Play CHỈ trả về offer mà người dùng ĐỦ ĐIỀU KIỆN. Vì vậy nếu có
+        // offer khuyến mãi (free trial / intro, offerId != null) thì ưu tiên dùng
+        // nó để màn thanh toán hiện "dùng thử miễn phí"; người đã hết điều kiện sẽ
+        // chỉ còn base plan giá thường.
+        return forBasePlan.firstOrNull { it.offerId != null }
+            ?: forBasePlan.firstOrNull()
+            ?: offers.firstOrNull()
+    }
 
     private fun ProductDetails.annualOfferToken(): String? =
         annualOffer()?.offerToken
