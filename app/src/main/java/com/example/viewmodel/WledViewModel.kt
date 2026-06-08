@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
 import com.example.billing.ProSubscriptionManager
 import com.example.data.*
+import com.example.util.MatrixImage
+import com.example.util.PoiImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -342,6 +345,30 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private val _onlineDevicePresetStats = MutableStateFlow<Map<Int, DevicePresetStorageStats>>(emptyMap())
     val onlineDevicePresetStats: StateFlow<Map<Int, DevicePresetStorageStats>> = _onlineDevicePresetStats.asStateFlow()
 
+    // Trạng thái upload ảnh → preset (tab "Upload POI & Cờ LED").
+    private val _imageUploadState = MutableStateFlow(ImageUploadUiState())
+    val imageUploadState: StateFlow<ImageUploadUiState> = _imageUploadState.asStateFlow()
+
+    // ---- Tab "Biên Tập Timeline" ----
+    private val timelineClipDao = db.timelineClipDao()
+
+    private val _editorClips = MutableStateFlow<Map<Int, List<TimelineClip>>>(emptyMap())
+    val editorClips: StateFlow<Map<Int, List<TimelineClip>>> = _editorClips.asStateFlow()
+
+    private val _editorPresets = MutableStateFlow<Map<Int, List<EditablePreset>>>(emptyMap())
+    val editorPresets: StateFlow<Map<Int, List<EditablePreset>>> = _editorPresets.asStateFlow()
+
+    private val _editorSelectedDeviceId = MutableStateFlow<Int?>(null)
+    val editorSelectedDeviceId: StateFlow<Int?> = _editorSelectedDeviceId.asStateFlow()
+
+    private val _editorTotalSeconds = MutableStateFlow(60)
+    val editorTotalSeconds: StateFlow<Int> = _editorTotalSeconds.asStateFlow()
+
+    private val _editorUploadState = MutableStateFlow(EditorUploadUiState())
+    val editorUploadState: StateFlow<EditorUploadUiState> = _editorUploadState.asStateFlow()
+
+    private var nextEditorClipId = 1L
+
     init {
         // Start background polling to check online status
         startPolling()
@@ -364,6 +391,47 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         loadAudioPreferences()
+        loadEditorClipsFromDb()
+        seedMockDeviceForDebug()
+    }
+
+    /** DEV ONLY: seed thiết bị ảo + mở Pro tạm thời để thử nghiệm khi không có mạch thật. */
+    private fun seedMockDeviceForDebug() {
+        if (!BuildConfig.DEBUG) return
+        viewModelScope.launch {
+            val seeded = repository.ensureMockDeviceSeeded()
+            if (seeded) {
+                // Lần đầu tạo mock → bật Pro debug để mở các tab thử nghiệm.
+                proSubscriptionManager.setDebugEntitlement(true)
+            }
+        }
+    }
+
+    /** Nạp clip timeline đã lưu (Room) vào working state lúc khởi động. */
+    private fun loadEditorClipsFromDb() {
+        viewModelScope.launch {
+            timelineClipDao.getAllClips().collect { entities ->
+                // Bỏ qua đồng bộ ngược: chỉ nạp lần đầu (khi working state còn rỗng) để
+                // tránh ghi đè thao tác đang chỉnh. Sau đó UI là nguồn sự thật.
+                if (_editorClips.value.isNotEmpty()) return@collect
+                if (entities.isEmpty()) return@collect
+                val grouped = entities.groupBy { it.deviceId }.mapValues { (_, list) ->
+                    list.map { e ->
+                        TimelineClip(
+                            id = nextEditorClipId++,
+                            deviceId = e.deviceId,
+                            presetId = e.presetId,
+                            presetName = e.presetName,
+                            startSec = e.startDeciseconds / 10f,
+                            durationSec = e.durationDeciseconds / 10f,
+                            transitionSec = e.transitionDeciseconds / 10f
+                        )
+                    }
+                }
+                _editorClips.value = grouped
+                recomputeEditorTotalSeconds()
+            }
+        }
     }
 
     // Default static effect list as fallback
@@ -923,6 +991,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun safeState(ip: String) {
+        if (MockDevice.isMock(ip)) return
         val url = "http://$ip/json/state"
         api.updateState(url, WledStateRequest(ps = 0))
         delay(100)
@@ -931,10 +1000,12 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun deletePresetSlot(ip: String, pid: Int) {
+        if (MockDevice.isMock(ip)) return
         api.updateState("http://$ip/json/state", WledStateRequest(pdel = pid))
     }
 
     private fun deleteDeviceFile(ip: String, path: String) {
+        if (MockDevice.isMock(ip)) return
         val normalized = if (path.startsWith("/")) path else "/$path"
         val encodedPath = java.net.URLEncoder.encode(normalized, "UTF-8")
         val request = okhttp3.Request.Builder()
@@ -956,6 +1027,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Liệt kê toàn bộ file trên thiết bị qua GET /edit?list=/ rồi lọc ra .bmp/.gif. */
     private suspend fun listDeviceImageFiles(ip: String): List<DeviceImageFile> = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(ip)) return@withContext emptyList()
         val request = okhttp3.Request.Builder()
             .url("http://$ip/edit?list=/")
             .build()
@@ -1573,6 +1645,17 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun fetchSingleDeviceTimeline(device: WledDevice, playlistId: Int): DevicePlaylistTimeline = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(device.ipAddress)) {
+            return@withContext DevicePlaylistTimeline(
+                deviceId = device.id,
+                deviceName = device.name,
+                playlistId = playlistId,
+                playlistName = "Mock",
+                steps = emptyList(),
+                totalSeconds = 0,
+                isLoaded = true
+            )
+        }
         val url = "http://${device.ipAddress}/presets.json"
         try {
             val client = okhttp3.OkHttpClient.Builder()
@@ -2379,6 +2462,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     /** GET /presets.json → JSONObject. Returns an empty object if the device has none. */
     private suspend fun fetchPresetsJsonObject(ip: String): org.json.JSONObject = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(ip)) return@withContext org.json.JSONObject(MockDevice.cannedPresetsJson())
         val client = okhttp3.OkHttpClient.Builder()
             .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
@@ -2417,30 +2501,50 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun uploadBinaryFile(ip: String, path: String, contentB64: String) = withContext(Dispatchers.IO) {
         try {
             val bytes = android.util.Base64.decode(contentB64, android.util.Base64.DEFAULT)
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
             val filename = if (path.startsWith("/")) path else "/$path"
             val mime = if (filename.endsWith(".gif", true)) "image/gif" else "image/bmp"
-            val body = okhttp3.MultipartBody.Builder()
-                .setType(okhttp3.MultipartBody.FORM)
-                .addFormDataPart("data", filename, bytes.toRequestBody(mime.toMediaTypeOrNull()))
-                .build()
-            val request = okhttp3.Request.Builder().url("http://$ip/upload").post(body).build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    android.util.Log.e("WledViewModel", "File upload failed ($path) for $ip: ${response.code}")
-                }
-            }
+            uploadImageBytes(ip, filename, bytes, mime)
         } catch (e: Exception) {
             android.util.Log.e("WledViewModel", "File upload exception ($path) for $ip", e)
         }
     }
 
+    /**
+     * Upload raw bytes (BMP/GIF) via multipart POST /upload. Throws on failure so
+     * callers (POI/Cờ LED) can retry. Timeout co giãn theo dung lượng cho GIF lớn.
+     */
+    private suspend fun uploadImageBytes(
+        ip: String,
+        filename: String,
+        bytes: ByteArray,
+        mime: String
+    ) = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(ip)) { delay(120); return@withContext }
+        val timeoutSec = (30L + bytes.size / 40000L).coerceIn(30L, 300L)
+        val client = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        val path = if (filename.startsWith("/")) filename else "/$filename"
+        val body = okhttp3.MultipartBody.Builder()
+            .setType(okhttp3.MultipartBody.FORM)
+            .addFormDataPart("data", path, bytes.toRequestBody(mime.toMediaTypeOrNull()))
+            .build()
+        val request = okhttp3.Request.Builder().url("http://$ip/upload").post(body).build()
+        client.newCall(request).execute().use { response ->
+            if (response.code == 401) {
+                throw Exception("WLED đang khóa PIN phần /upload, cần mở khóa trước khi tải ảnh lên.")
+            }
+            if (!response.isSuccessful) {
+                throw Exception("Upload ảnh thất bại (HTTP ${response.code})")
+            }
+        }
+    }
+
     /** Replace the device's presets.json. Throws on failure so callers can report it. */
     private suspend fun uploadPresetsJson(ip: String, jsonContent: String) {
+        if (MockDevice.isMock(ip)) { delay(120); return }
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val url = "http://$ip/upload"
             val client = okhttp3.OkHttpClient.Builder()
@@ -2467,10 +2571,668 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    // =========================================================================
+    // UPLOAD ẢNH → PRESET HÌNH ẢNH (tab "Upload POI & Cờ LED")
+    // POI  → BMP 24-bit, hiệu ứng "Poi HSL"   (docs/poi-preset-workflow.md §7)
+    // Cờ LED → GIF, fx=53 + WAIT-PERSIST       (docs/poi-preset-workflow.md §11/§19)
+    // =========================================================================
+
+    private data class PreparedImage(
+        val filename: String,
+        val presetName: String,
+        val bytes: ByteArray
+    )
+
+    /** Bắt đầu upload danh sách ảnh đã chọn tới các mạch online được chọn. */
+    fun startImageUpload(
+        mode: ImageUploadMode,
+        uris: List<android.net.Uri>,
+        poiPixels: Int,
+        flagWidth: Int,
+        flagHeight: Int,
+        writeMode: ImageWriteMode,
+        targetDeviceIds: Set<Int>
+    ) {
+        if (_imageUploadState.value.isRunning) return
+        val targets = devices.value.filter { it.isOnline && it.id in targetDeviceIds }
+        if (uris.isEmpty()) {
+            _imageUploadState.value = ImageUploadUiState(error = "Chưa chọn ảnh nào để upload.")
+            return
+        }
+        if (targets.isEmpty()) {
+            _imageUploadState.value = ImageUploadUiState(error = "Không có mạch online nào được chọn.")
+            return
+        }
+        if (mode == ImageUploadMode.POI && poiPixels !in PoiImage.POI_MIN_W..PoiImage.POI_MAX_W) {
+            _imageUploadState.value = ImageUploadUiState(error = "Số pixel POI phải trong khoảng ${PoiImage.POI_MIN_W}–${PoiImage.POI_MAX_W}.")
+            return
+        }
+        if (mode == ImageUploadMode.FLAG && (flagWidth < 1 || flagHeight < 1)) {
+            _imageUploadState.value = ImageUploadUiState(error = "Chiều rộng và chiều cao cờ LED phải ≥ 1.")
+            return
+        }
+
+        viewModelScope.launch {
+            _imageUploadState.value = ImageUploadUiState(isRunning = true, mode = mode, progressNote = "Đang xử lý ảnh…")
+            try {
+                val (prepared, warnings) = withContext(Dispatchers.Default) {
+                    prepareImages(mode, uris, poiPixels, flagWidth, flagHeight)
+                }
+                if (prepared.isEmpty()) {
+                    _imageUploadState.value = ImageUploadUiState(
+                        finished = true,
+                        mode = mode,
+                        warnings = warnings,
+                        error = "Không có ảnh hợp lệ để upload."
+                    )
+                    return@launch
+                }
+                _imageUploadState.update {
+                    it.copy(total = prepared.size * targets.size, warnings = warnings, progressNote = "Đang upload…")
+                }
+
+                // Song song ≤ 4 mạch (tuần tự trong từng mạch do ràng buộc presetToSave).
+                val results = mutableListOf<ImageUploadDeviceResult>()
+                for (chunk in targets.chunked(4)) {
+                    val chunkResults = chunk.map { device ->
+                        async(Dispatchers.IO) { uploadToDevice(device, mode, prepared, writeMode) }
+                    }.awaitAll()
+                    results += chunkResults
+                }
+
+                _imageUploadState.update {
+                    it.copy(isRunning = false, finished = true, results = results, progressNote = "Hoàn tất")
+                }
+                refreshOnlineDevicePresetStats()
+            } catch (e: Exception) {
+                android.util.Log.e("WledViewModel", "Image upload failed", e)
+                _imageUploadState.update {
+                    it.copy(isRunning = false, finished = true, error = e.message ?: "Upload thất bại")
+                }
+            }
+        }
+    }
+
+    /** Đóng panel kết quả/ lỗi (không cho đóng khi đang chạy). */
+    fun dismissImageUpload() {
+        if (!_imageUploadState.value.isRunning) {
+            _imageUploadState.value = ImageUploadUiState()
+        }
+    }
+
+    private fun bumpUploadProgress(by: Int, note: String) {
+        _imageUploadState.update {
+            it.copy(completed = (it.completed + by).coerceAtMost(it.total), progressNote = note)
+        }
+    }
+
+    /** Giải mã + xử lý ảnh thành bytes sẵn sàng upload (BMP cho POI, GIF cho Cờ LED). */
+    private fun prepareImages(
+        mode: ImageUploadMode,
+        uris: List<android.net.Uri>,
+        poiPixels: Int,
+        flagWidth: Int,
+        flagHeight: Int
+    ): Pair<List<PreparedImage>, List<String>> {
+        val ctx = getApplication<Application>()
+        val out = mutableListOf<PreparedImage>()
+        val warnings = mutableListOf<String>()
+        val maxLen = if (mode == ImageUploadMode.POI) 20 else 24
+        val (clampW, clampH) = if (mode == ImageUploadMode.FLAG) MatrixImage.clampSize(flagWidth, flagHeight) else (0 to 0)
+        if (mode == ImageUploadMode.FLAG && (clampW != flagWidth || clampH != flagHeight)) {
+            warnings += "Kích thước cờ vượt ngưỡng an toàn, đã co về ${clampW}×${clampH}."
+        }
+        for (uri in uris) {
+            val display = queryDisplayName(ctx, uri)
+            val base = display.substringBeforeLast('.', display)
+            val safe = base.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(maxLen).ifEmpty { "Preset" }
+            try {
+                val raw = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (raw == null) { warnings += "$display: không đọc được file."; continue }
+                if (mode == ImageUploadMode.POI) {
+                    val src = android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size)
+                    if (src == null) { warnings += "$display: không phải ảnh hợp lệ."; continue }
+                    val bmp = PoiImage.encodeBmp24(PoiImage.rotateResizeWidth(src, poiPixels))
+                    if (!PoiImage.bmpFitsLimit(bmp)) {
+                        warnings += "$display: ảnh quá lớn (${bmp.size / 1024}KB ≥ 63KB), hãy giảm số pixel."
+                        continue
+                    }
+                    out += PreparedImage("$safe.bmp", safe, bmp)
+                } else {
+                    val gif = MatrixImage.buildGif(raw, clampW, clampH)
+                    out += PreparedImage("$safe.gif", safe, gif)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("WledViewModel", "prepareImages failed for $display", e)
+                warnings += "$display: lỗi xử lý (${e.message ?: "không rõ"})."
+            }
+        }
+        return out to warnings
+    }
+
+    private fun queryDisplayName(ctx: android.content.Context, uri: android.net.Uri): String {
+        var name = "image"
+        try {
+            ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx != -1 && c.moveToFirst()) {
+                    name = c.getString(idx) ?: name
+                }
+            }
+        } catch (e: Exception) { /* fallback */ }
+        return name
+    }
+
+    private suspend fun uploadToDevice(
+        device: WledDevice,
+        mode: ImageUploadMode,
+        prepared: List<PreparedImage>,
+        writeMode: ImageWriteMode
+    ): ImageUploadDeviceResult {
+        val ip = device.ipAddress
+        var ok = 0
+        var failed = 0
+        var skipped = 0
+        try {
+            val overwrite = writeMode == ImageWriteMode.OVERWRITE_FROM_1
+            if (overwrite) {
+                // Xóa preset logo (1–59) + file ảnh không còn dùng chung trước khi ghi lại từ ID 1.
+                try {
+                    deletePresetGroupOnDevice(device, PresetDeleteAction.LOGO_IMAGES)
+                } catch (e: Exception) {
+                    android.util.Log.w("WledViewModel", "Xóa logo cũ thất bại trên $ip", e)
+                }
+            }
+            val presets = fetchPresetsJsonObject(ip)
+            val slots = computeLogoSlots(presets, prepared.size, overwrite)
+            if (slots.isEmpty()) {
+                bumpUploadProgress(prepared.size, "${device.name}: hết slot")
+                return ImageUploadDeviceResult(device.id, device.name, 0, 0, prepared.size, "Hết slot trống (1–59).")
+            }
+            val fx = if (mode == ImageUploadMode.POI) getPoiEffectId(ip) else MatrixImage.FX_GIF
+            for ((index, img) in prepared.withIndex()) {
+                if (index >= slots.size) {
+                    skipped++
+                    bumpUploadProgress(1, "${device.name}: hết slot (${index + 1}/${prepared.size})")
+                    continue
+                }
+                val slot = slots[index]
+                val success = try {
+                    if (mode == ImageUploadMode.POI) uploadPoiOne(ip, img, slot, fx)
+                    else uploadFlagOne(ip, img, slot)
+                    true
+                } catch (e: Exception) {
+                    android.util.Log.e("WledViewModel", "Upload ${img.filename} → $ip slot $slot lỗi", e)
+                    false
+                }
+                if (success) ok++ else failed++
+                bumpUploadProgress(1, "${device.name}: ${index + 1}/${prepared.size}")
+                delay(150)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("WledViewModel", "uploadToDevice $ip lỗi", e)
+            val remaining = (prepared.size - ok - failed - skipped).coerceAtLeast(0)
+            if (remaining > 0) bumpUploadProgress(remaining, "${device.name}: lỗi")
+            return ImageUploadDeviceResult(device.id, device.name, ok, failed, skipped, e.message ?: "Lỗi không xác định")
+        }
+        return ImageUploadDeviceResult(device.id, device.name, ok, failed, skipped, null)
+    }
+
+    /** POI: upload BMP → chờ flash → psave (retry). */
+    private suspend fun uploadPoiOne(ip: String, img: PreparedImage, slot: Int, fx: Int) {
+        uploadWithRetry(ip, img, "image/bmp")
+        delay(200)
+        psaveWithRetry(ip, img, slot, fx)
+    }
+
+    /** Cờ LED: upload GIF → chờ file → psave → WAIT-PERSIST (poll /presets.json). */
+    private suspend fun uploadFlagOne(ip: String, img: PreparedImage, slot: Int) {
+        uploadWithRetry(ip, img, "image/gif")
+        delay(200)
+        // Chờ file xuất hiện (≤5s); nếu chưa thấy vẫn tiếp tục psave.
+        val t0 = System.currentTimeMillis()
+        while (!fileExistsOnDevice(ip, img.filename)) {
+            if (System.currentTimeMillis() - t0 > 5000) break
+            delay(150)
+        }
+        psaveWithRetry(ip, img, slot, MatrixImage.FX_GIF)
+        if (waitPresetPersisted(ip, slot, 15000)) return
+        // Cờ vẫn chưa commit → cho WLED idle rồi psave lại 1 lần.
+        delay(1000)
+        psaveWithRetry(ip, img, slot, MatrixImage.FX_GIF)
+        if (!waitPresetPersisted(ip, slot, 15000)) {
+            throw Exception("Preset $slot không persist sau 2 lần psave")
+        }
+    }
+
+    private suspend fun uploadWithRetry(ip: String, img: PreparedImage, mime: String) {
+        var lastErr: Exception? = null
+        for (attempt in 0 until 3) {
+            try {
+                uploadImageBytes(ip, img.filename, img.bytes, mime)
+                return
+            } catch (e: Exception) {
+                lastErr = e
+                delay(500L * (attempt + 1))
+            }
+        }
+        throw lastErr ?: Exception("Upload ${img.filename} thất bại")
+    }
+
+    private suspend fun psaveWithRetry(ip: String, img: PreparedImage, slot: Int, fx: Int) {
+        var lastErr: Exception? = null
+        for (attempt in 0 until 3) {
+            try {
+                saveImagePreset(ip, img.filename, slot, img.presetName, fx)
+                return
+            } catch (e: Exception) {
+                lastErr = e
+                delay(300L * (attempt + 1))
+            }
+        }
+        throw lastErr ?: Exception("Lưu preset slot $slot thất bại")
+    }
+
+    /** Tra fx_id của "Poi HSL" qua GET /json; fallback 0 (Solid) nếu không thấy. */
+    private suspend fun getPoiEffectId(ip: String): Int = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(ip)) {
+            return@withContext MockDevice.cannedJsonResponse().effects?.indexOf(PoiImage.POI_EFFECT_NAME)?.takeIf { it >= 0 } ?: 0
+        }
+        try {
+            val resp = api.getCompleteApi("http://$ip/json")
+            val idx = resp.effects?.indexOf(PoiImage.POI_EFFECT_NAME) ?: -1
+            if (idx >= 0) idx else 0
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /** psave preset hình ảnh (payload chuẩn — docs §6.3/§11.4). */
+    private suspend fun saveImagePreset(
+        ip: String,
+        filename: String,
+        slot: Int,
+        presetName: String,
+        fx: Int,
+        bri: Int = 128,
+        segBri: Int = 255
+    ) = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(ip)) { delay(60); return@withContext }
+        val path = if (filename.startsWith("/")) filename else "/$filename"
+        val seg = org.json.JSONObject()
+            .put("id", 0).put("on", true).put("bri", segBri)
+            .put("n", path).put("fx", fx).put("ix", 0).put("ml2", 0)
+        val payload = org.json.JSONObject()
+            .put("on", true).put("bri", bri)
+            .put("seg", org.json.JSONArray().put(seg))
+            .put("psave", slot).put("n", presetName)
+            .put("ib", true).put("sb", true)
+        val body = payload.toString().toRequestBody("application/json".toMediaTypeOrNull())
+        val request = okhttp3.Request.Builder().url("http://$ip/json/state").post(body).build()
+        presetFileClient.newCall(request).execute().use { response ->
+            if (response.code == 401) {
+                throw Exception("WLED đang khóa PIN, không lưu được preset.")
+            }
+            if (!response.isSuccessful) {
+                throw Exception("Lưu preset thất bại (HTTP ${response.code})")
+            }
+        }
+    }
+
+    /** Kiểm tra file đã có trên thiết bị chưa (so khớp không phân biệt hoa thường). */
+    private suspend fun fileExistsOnDevice(ip: String, filename: String): Boolean {
+        if (MockDevice.isMock(ip)) return true
+        val target = ("/" + filename.trimStart('/')).lowercase()
+        return try {
+            listDeviceImageFiles(ip).any { it.path.lowercase() == target }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** WAIT-PERSIST: poll /presets.json tới khi slot thật sự commit (docs §11.6). */
+    private suspend fun waitPresetPersisted(ip: String, slot: Int, timeoutMs: Long): Boolean {
+        if (MockDevice.isMock(ip)) return true
+        val start = System.currentTimeMillis()
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            val ok = try {
+                val v = fetchPresetsJsonObject(ip).optJSONObject(slot.toString())
+                v != null && v.length() > 0
+            } catch (e: Exception) {
+                false
+            }
+            if (ok) return true
+            delay(500)
+        }
+        return false
+    }
+
+    /** Danh sách slot logo (1–59) để ghi [count] preset (docs §20). */
+    private fun computeLogoSlots(
+        presets: org.json.JSONObject,
+        count: Int,
+        overwrite: Boolean
+    ): List<Int> {
+        val candidates = logoPresetRange.filter { it !in systemPresetSlots }
+        if (overwrite) return candidates.take(count)
+        val used = candidates.filter { (presets.optJSONObject(it.toString())?.length() ?: 0) > 0 }.toSet()
+        return candidates.filter { it !in used }.take(count)
+    }
+
+    // =========================================================================
+    // TAB "BIÊN TẬP TIMELINE" — kéo thả preset vào track, biên dịch → playlist 249
+    // =========================================================================
+
+    /** Chọn thiết bị để hiện danh sách preset của nó ở khung trên. */
+    fun selectEditorDevice(deviceId: Int) {
+        _editorSelectedDeviceId.value = deviceId
+        val device = devices.value.find { it.id == deviceId } ?: return
+        if (_editorPresets.value[deviceId] == null) fetchEditorPresets(device)
+    }
+
+    /** Đọc presets.json → danh sách preset (bỏ slot hệ thống) cho khung kéo thả. */
+    fun fetchEditorPresets(device: WledDevice) {
+        if (!device.isOnline) return
+        viewModelScope.launch {
+            val list = try {
+                val presets = fetchPresetsJsonObject(device.ipAddress)
+                val out = mutableListOf<EditablePreset>()
+                val keys = presets.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val pid = key.toIntOrNull() ?: continue
+                    if (pid in systemPresetSlots) continue
+                    val obj = presets.optJSONObject(key) ?: continue
+                    if (obj.length() == 0) continue
+                    val name = obj.optString("n", "Preset $pid").ifBlank { "Preset $pid" }
+                    out += EditablePreset(pid, name)
+                }
+                out.sortedBy { it.id }
+            } catch (e: Exception) {
+                android.util.Log.e("WledViewModel", "fetchEditorPresets failed", e)
+                emptyList()
+            }
+            _editorPresets.value = _editorPresets.value + (device.id to list)
+        }
+    }
+
+    /** Touch nhanh vào preset → phát thử ngay trên thiết bị để xem trước. */
+    fun previewPreset(deviceId: Int, presetId: Int) {
+        val device = devices.value.find { it.id == deviceId } ?: return
+        if (!device.isOnline) return
+        if (MockDevice.isMock(device.ipAddress)) {
+            android.util.Log.i("WledViewModel", "[MOCK] preview preset $presetId on ${device.name}")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                api.updateState(
+                    "http://${device.ipAddress}/json/state",
+                    WledStateRequest(on = true, ps = presetId)
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("WledViewModel", "previewPreset failed", e)
+            }
+        }
+    }
+
+    fun addClip(deviceId: Int, presetId: Int, presetName: String, startSec: Float, durationSec: Float = 5f) {
+        val existing = _editorClips.value[deviceId] ?: emptyList()
+        val dur = durationSec.coerceAtLeast(0.5f)
+        // Né chồng lấn: đẩy điểm bắt đầu sang phải qua các clip đang chiếm chỗ.
+        val start = resolveNonOverlapStart(existing, startSec.coerceAtLeast(0f), dur)
+        val clip = TimelineClip(
+            id = nextEditorClipId++,
+            deviceId = deviceId,
+            presetId = presetId,
+            presetName = presetName,
+            startSec = start,
+            durationSec = dur
+        )
+        updateDeviceClips(deviceId, existing + clip)
+    }
+
+    fun moveClip(deviceId: Int, clipId: Long, newStartSec: Float) {
+        val list = _editorClips.value[deviceId] ?: return
+        val clip = list.find { it.id == clipId } ?: return
+        val sorted = list.sortedBy { it.startSec }
+        val sidx = sorted.indexOfFirst { it.id == clipId }
+        // Giữ thứ tự, kẹp giữa clip trước & sau để không đè lên nhau.
+        val prevEnd = if (sidx > 0) sorted[sidx - 1].run { startSec + durationSec } else 0f
+        val nextStart = if (sidx < sorted.lastIndex) sorted[sidx + 1].startSec else Float.MAX_VALUE
+        val upper = (nextStart - clip.durationSec).coerceAtLeast(prevEnd)
+        val clamped = newStartSec.coerceIn(prevEnd, upper)
+        updateDeviceClips(deviceId, list.map { if (it.id == clipId) it.copy(startSec = clamped) else it })
+    }
+
+    fun resizeClip(deviceId: Int, clipId: Long, newDurationSec: Float) {
+        val list = _editorClips.value[deviceId] ?: return
+        val clip = list.find { it.id == clipId } ?: return
+        val sorted = list.sortedBy { it.startSec }
+        val sidx = sorted.indexOfFirst { it.id == clipId }
+        val nextStart = if (sidx < sorted.lastIndex) sorted[sidx + 1].startSec else Float.MAX_VALUE
+        val maxDur = (nextStart - clip.startSec).coerceAtLeast(0.5f)
+        val clamped = newDurationSec.coerceIn(0.5f, maxDur)
+        updateDeviceClips(deviceId, list.map { if (it.id == clipId) it.copy(durationSec = clamped) else it })
+    }
+
+    /** Tìm điểm bắt đầu gần [start] nhất mà clip [duration] không đè lên clip khác. */
+    private fun resolveNonOverlapStart(others: List<TimelineClip>, start: Float, duration: Float): Float {
+        val sorted = others.sortedBy { it.startSec }
+        var s = start.coerceAtLeast(0f)
+        var changed = true
+        var guard = 0
+        while (changed && guard++ < 2000) {
+            changed = false
+            for (c in sorted) {
+                val cs = c.startSec
+                val ce = c.startSec + c.durationSec
+                if (s < ce && s + duration > cs) {
+                    s = ce
+                    changed = true
+                }
+            }
+        }
+        return s
+    }
+
+    fun removeClip(deviceId: Int, clipId: Long) {
+        val list = _editorClips.value[deviceId] ?: return
+        updateDeviceClips(deviceId, list.filterNot { it.id == clipId })
+    }
+
+    fun clearDeviceClips(deviceId: Int) = updateDeviceClips(deviceId, emptyList())
+
+    fun extendEditorTotalSeconds(by: Int = 30) {
+        _editorTotalSeconds.value = (_editorTotalSeconds.value + by).coerceAtMost(3600)
+    }
+
+    private fun updateDeviceClips(deviceId: Int, clips: List<TimelineClip>) {
+        val sorted = clips.sortedBy { it.startSec }
+        _editorClips.value = _editorClips.value + (deviceId to sorted)
+        recomputeEditorTotalSeconds()
+        persistDeviceClips(deviceId, sorted)
+    }
+
+    private fun persistDeviceClips(deviceId: Int, clips: List<TimelineClip>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                timelineClipDao.replaceDeviceClips(deviceId, clips.map {
+                    TimelineClipEntity(
+                        deviceId = it.deviceId,
+                        presetId = it.presetId,
+                        presetName = it.presetName,
+                        startDeciseconds = Math.round(it.startSec * 10),
+                        durationDeciseconds = Math.round(it.durationSec * 10),
+                        transitionDeciseconds = Math.round(it.transitionSec * 10)
+                    )
+                })
+            } catch (e: Exception) {
+                android.util.Log.e("WledViewModel", "persistDeviceClips failed", e)
+            }
+        }
+    }
+
+    private fun recomputeEditorTotalSeconds() {
+        val maxEnd = _editorClips.value.values.flatten().maxOfOrNull { it.startSec + it.durationSec } ?: 0f
+        val rounded = (Math.ceil(maxEnd / 10.0).toInt() * 10).coerceAtLeast(60)
+        if (rounded > _editorTotalSeconds.value) _editorTotalSeconds.value = rounded
+    }
+
+    /** Ghi timeline đã biên tập của mọi mạch online (có clip) vào slot 249 + upload. */
+    fun compileAndUploadEditorTimelines(loop: Boolean, onDone: () -> Unit = {}) {
+        if (_editorUploadState.value.isRunning) return
+        val total = _editorTotalSeconds.value
+        val targets = devices.value.filter { it.isOnline && !(_editorClips.value[it.id].isNullOrEmpty()) }
+        if (targets.isEmpty()) {
+            _editorUploadState.value = EditorUploadUiState(error = "Chưa có timeline nào để ghi (mạch online + có clip).")
+            return
+        }
+        viewModelScope.launch {
+            _editorUploadState.value = EditorUploadUiState(isRunning = true)
+            val results = mutableListOf<String>()
+            var hadError = false
+            for (device in targets) {
+                val clips = _editorClips.value[device.id] ?: continue
+                try {
+                    withContext(Dispatchers.IO) {
+                        val presets = fetchPresetsJsonObject(device.ipAddress)
+                        val ok = buildPlaylist249Json(presets, clips, total, loop)
+                        if (!ok) throw Exception("Không có clip hợp lệ")
+                        uploadPresetsJson(device.ipAddress, presets.toString())
+                    }
+                    results += "${device.name}: OK (${clips.size} clip)"
+                } catch (e: Exception) {
+                    hadError = true
+                    android.util.Log.e("WledViewModel", "compile editor timeline failed for ${device.ipAddress}", e)
+                    results += "${device.name}: lỗi ${e.message ?: "không rõ"}"
+                }
+            }
+            _editorUploadState.value = EditorUploadUiState(
+                isRunning = false,
+                finished = true,
+                results = results,
+                error = if (hadError) "Một số mạch ghi không thành công." else null
+            )
+            fetchTimelinesForAllDevices(249)
+            onDone()
+        }
+    }
+
+    fun dismissEditorUpload() {
+        if (!_editorUploadState.value.isRunning) _editorUploadState.value = EditorUploadUiState()
+    }
+
+    /** Build playlist 249 (+248 OFF cho gap) từ clip biên tập. Trả false nếu rỗng. */
+    private fun buildPlaylist249Json(
+        presets: org.json.JSONObject,
+        clips: List<TimelineClip>,
+        totalSeconds: Int,
+        loop: Boolean
+    ): Boolean {
+        val psArray = org.json.JSONArray()
+        val durArray = org.json.JSONArray()
+        val transArray = org.json.JSONArray()
+        var lastEnd = 0.0
+        var needsOff = false
+        var clipCount = 0
+        for (clip in clips.sortedBy { it.startSec }) {
+            val start = clip.startSec.toDouble()
+            val duration = clip.durationSec.toDouble()
+            val transition = clip.transitionSec.toDouble()
+            val gap = start - lastEnd
+            if (gap > timecodeGapTolerance) {
+                psArray.put(248)
+                durArray.put(maxOf(1, Math.round(gap * 10).toInt()))
+                transArray.put(0)
+                needsOff = true
+            }
+            psArray.put(clip.presetId)
+            durArray.put(maxOf(1, Math.round(duration * 10).toInt()))
+            transArray.put(maxOf(0, Math.round(transition * 10).toInt()))
+            lastEnd = maxOf(lastEnd, start + duration)
+            clipCount++
+        }
+        if (clipCount == 0) return false
+        val trailing = totalSeconds - lastEnd
+        if (trailing > timecodeGapTolerance) {
+            psArray.put(248)
+            durArray.put(maxOf(1, Math.round(trailing * 10).toInt()))
+            transArray.put(0)
+            needsOff = true
+        }
+        if (needsOff) presets.put("248", buildTimelineOffPreset())
+        val playlist = org.json.JSONObject().apply {
+            put("ps", psArray)
+            put("dur", durArray)
+            put("transition", transArray)
+            put("repeat", if (loop) 0 else 1)
+            put("end", 0)
+            put("r", 0)
+        }
+        presets.put("249", org.json.JSONObject().apply {
+            put("playlist", playlist)
+            put("on", true)
+            put("n", "Timeline Edit")
+        })
+        return true
+    }
 }
 
 data class WledEffect(val id: Int, val name: String, val vietnameseName: String)
 data class WledPalette(val id: Int, val name: String, val vietnameseName: String)
+
+/** Chế độ upload ảnh: POI (thanh quay → BMP) hoặc Cờ LED (ma trận → GIF). */
+enum class ImageUploadMode { POI, FLAG }
+
+/** Cách ghi slot preset 1–59. */
+enum class ImageWriteMode { OVERWRITE_FROM_1, APPEND_EMPTY }
+
+/** Kết quả upload trên một thiết bị. */
+data class ImageUploadDeviceResult(
+    val deviceId: Int,
+    val deviceName: String,
+    val ok: Int,
+    val failed: Int,
+    val skipped: Int,
+    val error: String? = null
+)
+
+/** Một preset có thể kéo vào timeline (tab Biên Tập). */
+data class EditablePreset(val id: Int, val name: String)
+
+/** Clip preset trên timeline biên tập (working state, đơn vị giây). */
+data class TimelineClip(
+    val id: Long,
+    val deviceId: Int,
+    val presetId: Int,
+    val presetName: String,
+    val startSec: Float,
+    val durationSec: Float,
+    val transitionSec: Float = 0f
+)
+
+/** Trạng thái ghi timeline biên tập vào thiết bị. */
+data class EditorUploadUiState(
+    val isRunning: Boolean = false,
+    val finished: Boolean = false,
+    val results: List<String> = emptyList(),
+    val error: String? = null
+)
+
+/** Trạng thái tiến trình upload ảnh → preset cho UI. */
+data class ImageUploadUiState(
+    val isRunning: Boolean = false,
+    val mode: ImageUploadMode = ImageUploadMode.POI,
+    val total: Int = 0,
+    val completed: Int = 0,
+    val progressNote: String = "",
+    val warnings: List<String> = emptyList(),
+    val results: List<ImageUploadDeviceResult> = emptyList(),
+    val finished: Boolean = false,
+    val error: String? = null
+)
 
 /** A mock (virtual) device parsed from an imported timecode file. */
 data class TimecodeMockDevice(

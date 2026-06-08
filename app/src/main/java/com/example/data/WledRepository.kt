@@ -3,6 +3,7 @@ package com.example.data
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 class WledRepository(
@@ -38,6 +39,17 @@ class WledRepository(
      * Checks online status of device, updates name / capabilities if possible, and saves state to DB
      */
     suspend fun pingDevice(device: WledDevice): WledDevice = withContext(Dispatchers.IO) {
+        // DEBUG: thiết bị ảo luôn "online", không gọi mạng.
+        if (MockDevice.isMock(device.ipAddress)) {
+            val mock = device.copy(
+                isOnline = true,
+                product = "ARGB HSL Controller",
+                fwVersion = "mock-0.14",
+                lastSeenTimestamp = System.currentTimeMillis()
+            )
+            wledDao.updateDevice(mock)
+            return@withContext mock
+        }
         val baseUrl = "http://${device.ipAddress}/json"
         try {
             val response = wledApi.getCompleteApi(baseUrl)
@@ -220,6 +232,7 @@ class WledRepository(
      * Fetch complete responses (e.g. dynamic effects, palettes names from device)
      */
     suspend fun fetchDeviceDetails(device: WledDevice): WledResponse? = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(device.ipAddress)) return@withContext MockDevice.cannedJsonResponse()
         val url = "http://${device.ipAddress}/json"
         try {
             wledApi.getCompleteApi(url)
@@ -227,6 +240,15 @@ class WledRepository(
             Log.e("WledRepository", "Error fetching details for ${device.ipAddress}", e)
             null
         }
+    }
+
+    /** DEBUG: seed một thiết bị ảo nếu chưa có. Trả về true nếu vừa tạo mới. */
+    suspend fun ensureMockDeviceSeeded(): Boolean = withContext(Dispatchers.IO) {
+        if (!com.example.BuildConfig.DEBUG) return@withContext false
+        val all = wledDao.getAllDevices().first()
+        if (all.any { MockDevice.isMock(it.ipAddress) }) return@withContext false
+        wledDao.insertDevice(MockDevice.seedDevice())
+        true
     }
 
     private suspend fun markOffline(device: WledDevice) {

@@ -51,8 +51,17 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.ui.input.pointer.positionChange
+import kotlin.math.roundToInt
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
@@ -88,6 +97,13 @@ import com.example.viewmodel.PresetDeviceDeleteError
 import com.example.viewmodel.PresetDeletePreview
 import com.example.viewmodel.PresetDeleteUiState
 import com.example.viewmodel.PlaylistPlaybackState
+import com.example.viewmodel.ImageUploadMode
+import com.example.viewmodel.ImageWriteMode
+import com.example.viewmodel.ImageUploadUiState
+import com.example.viewmodel.ImageUploadDeviceResult
+import com.example.viewmodel.EditablePreset
+import com.example.viewmodel.TimelineClip
+import com.example.viewmodel.EditorUploadUiState
 import com.example.viewmodel.TimecodeMockDevice
 import com.example.viewmodel.TimecodeImportUiState
 import com.example.viewmodel.TimecodeUploadResult
@@ -358,7 +374,8 @@ private fun CompactControlTabRow(
     val tabs = listOf(
         "Cấu Hình Mạch",
         "Đồng Loạt (All)",
-        "Nút Custom"
+        "Upload POI & Cờ LED",
+        "Biên Tập Timeline"
     )
 
     Row(
@@ -1787,6 +1804,20 @@ fun DeviceControlSection(
     var syncBrightnessAll by remember { mutableFloatStateOf(128f) }
     var pxPerSec by remember { mutableFloatStateOf(39.5f) }
 
+    // Chuyển từ tab Biên Tập → tab Đồng Loạt (All) rồi cuộn tới bảng timeline.
+    var pendingJumpToTimeline by remember { mutableStateOf(false) }
+    var allTabViewportTopY by remember { mutableFloatStateOf(0f) }
+    var timelineBoardY by remember { mutableStateOf<Float?>(null) }
+
+    // ---- State cho tab "Upload POI & Cờ LED" ----
+    var imageUploadMode by remember { mutableStateOf(ImageUploadMode.POI) }
+    var poiPixelsText by remember { mutableStateOf("72") }
+    var flagWidthText by remember { mutableStateOf("32") }
+    var flagHeightText by remember { mutableStateOf("16") }
+    var imageWriteMode by remember { mutableStateOf(ImageWriteMode.APPEND_EMPTY) }
+    var selectedImageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var deselectedUploadDeviceIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
+
     val context = LocalContext.current
 
     LaunchedEffect(device.id) {
@@ -1897,6 +1928,14 @@ fun DeviceControlSection(
         }
     }
 
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            selectedImageUris = (selectedImageUris + uris).distinct()
+        }
+    }
+
     // Use a stable key of which devices are online (by ID and IP) to avoid re-triggering on background ping updates
     val onlineDevicesKey = remember(devices) {
         devices.filter { it.isOnline }.joinToString(",") { "${it.id}_${it.ipAddress}" }
@@ -1911,8 +1950,38 @@ fun DeviceControlSection(
     }
 
     LaunchedEffect(selectedTab, onlineDevicesKey) {
-        if (selectedTab == 1) {
+        if (selectedTab == 1 || selectedTab == 2) {
             viewModel.refreshOnlineDevicePresetStats()
+        }
+    }
+
+    // Khi bấm "sang tab Đồng Loạt để chạy": chờ tab 1 dựng xong bảng timeline rồi cuộn tới đúng vị trí.
+    LaunchedEffect(pendingJumpToTimeline, selectedTab, timelineBoardY) {
+        if (pendingJumpToTimeline && selectedTab == 1) {
+            val boardY = timelineBoardY
+            if (boardY != null) {
+                val target = (allScrollState.value + (boardY - allTabViewportTopY)).roundToInt().coerceAtLeast(0)
+                allScrollState.animateScrollTo(target)
+                pendingJumpToTimeline = false
+            }
+        }
+    }
+
+    val editorSelectedDeviceId by viewModel.editorSelectedDeviceId.collectAsStateWithLifecycle()
+    LaunchedEffect(selectedTab, onlineDevicesKey, editorSelectedDeviceId) {
+        if (selectedTab == 3) {
+            val onlineList = devices.filter { it.isOnline }
+            // Mặc định chọn mạch đang điều khiển nếu nó online, nếu không thì mạch online đầu tiên.
+            val target = onlineList.find { it.id == editorSelectedDeviceId }
+                ?: onlineList.find { it.id == device.id }
+                ?: onlineList.firstOrNull()
+            if (target != null) {
+                if (editorSelectedDeviceId != target.id) {
+                    viewModel.selectEditorDevice(target.id)
+                } else {
+                    viewModel.fetchEditorPresets(target)
+                }
+            }
         }
     }
 
@@ -2003,7 +2072,8 @@ fun DeviceControlSection(
                 val (title, subtitle) = when (selectedTab) {
                     0 -> Pair("CẤU HÌNH ĐƠN MẠCH", "Test màu & xem cấu hình từng thiết bị")
                     1 -> Pair("ĐỒNG LOẠT TOÀN BỘ (All)", "Điều khiển đồng thời tất cả các mạch")
-                    else -> Pair("KỊCH BẢN & NÚT CUSTOM", "Hành động tùy chỉnh toàn hệ thống")
+                    2 -> Pair("UPLOAD POI & CỜ LED", "Tạo preset hình ảnh cho POI và ma trận cờ LED")
+                    else -> Pair("BIÊN TẬP TIMELINE", "Kéo thả preset vào track timeline của từng mạch")
                 }
                 Text(
                     text = title,
@@ -2078,6 +2148,7 @@ fun DeviceControlSection(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .onGloballyPositioned { allTabViewportTopY = it.positionInRoot().y }
                     .verticalScroll(scrollState)
                     .padding(dimens.screenPadding),
                 verticalArrangement = Arrangement.spacedBy(dimens.sectionSpacing)
@@ -2127,15 +2198,15 @@ fun DeviceControlSection(
                 }
 
                 if (!proState.isPro && selectedTab != 0) {
-                    val lockedTitle = if (selectedTab == 1) {
-                        "Đồng Loạt là tính năng Pro"
-                    } else {
-                        "Nút Custom là tính năng Pro"
+                    val lockedTitle = when (selectedTab) {
+                        1 -> "Đồng Loạt là tính năng Pro"
+                        2 -> "Upload POI & Cờ LED là tính năng Pro"
+                        else -> "Biên Tập Timeline là tính năng Pro"
                     }
-                    val lockedDescription = if (selectedTab == 1) {
-                        "Mở khóa điều khiển toàn bộ mạch, timeline biên đạo theo nhạc, import timecode và dọn preset hàng loạt."
-                    } else {
-                        "Mở khóa khu vực phím tắt/custom action để chuẩn bị các kịch bản vận hành sân khấu nhanh."
+                    val lockedDescription = when (selectedTab) {
+                        1 -> "Mở khóa điều khiển toàn bộ mạch, timeline biên đạo theo nhạc, import timecode và dọn preset hàng loạt."
+                        2 -> "Mở khóa công cụ tạo preset hình ảnh: upload ảnh thành hiệu ứng POI và cờ LED ma trận cho mọi mạch."
+                        else -> "Mở khóa bảng biên tập timeline: kéo thả preset vào track từng mạch và biên dịch playlist đồng bộ."
                     }
                     ProLockedFeaturePanel(
                         state = proState,
@@ -3240,7 +3311,12 @@ fun DeviceControlSection(
                                 }
 
                                 // CHOREOGRAPHY BOARD TRACK VIEW
-                                Spacer(modifier = Modifier.height(12.dp))
+                                Spacer(
+                                    modifier = Modifier
+                                        .height(12.dp)
+                                        .fillMaxWidth()
+                                        .onGloballyPositioned { timelineBoardY = it.positionInRoot().y }
+                                )
 
                                 // Mount the heavy DAW timeline board LAST: switch into the tab instantly,
                                 // let the transition settle, then build the board (and let its device
@@ -4268,91 +4344,90 @@ fun DeviceControlSection(
                     }
 
                     2 -> {
-                        // Section: Custom Button Configuration (Future Development Placeholder Grid)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Default.Build, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
-                            Text(
-                                text = "PHÍM TẮT CUSTOM CHUYÊN NGHIỆP",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Black,
-                                color = MaterialTheme.colorScheme.secondary,
-                                letterSpacing = 0.5.sp
-                            )
-                        }
-
-                        Card(
-                            shape = RoundedCornerShape(20.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Text(
-                                    text = "Thiết lập các cụm nút đại tác vụ sân khấu. Bạn có thể tự phối chuỗi lệnh HTTP, gán độ trễ và gom thiết bị theo nhóm biểu diễn riêng.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                )
-                                Card(
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(16.dp))
-                                        Text(
-                                            text = "Giai đoạn tiếp theo: Tích hợp bàn trộn phím vật lý MIDI qua giao thức USB-OTG.",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.secondary
-                                        )
-                                    }
+                        val imageUploadState by viewModel.imageUploadState.collectAsStateWithLifecycle()
+                        val uploadOnlineStats by viewModel.onlineDevicePresetStats.collectAsStateWithLifecycle()
+                        ImageUploadTab(
+                            devices = devices,
+                            onlineStats = uploadOnlineStats,
+                            mode = imageUploadMode,
+                            onModeChange = { imageUploadMode = it },
+                            poiPixelsText = poiPixelsText,
+                            onPoiPixelsChange = { poiPixelsText = it },
+                            flagWidthText = flagWidthText,
+                            onFlagWidthChange = { flagWidthText = it },
+                            flagHeightText = flagHeightText,
+                            onFlagHeightChange = { flagHeightText = it },
+                            writeMode = imageWriteMode,
+                            onWriteModeChange = { imageWriteMode = it },
+                            selectedUris = selectedImageUris,
+                            onPickImages = { imagePickerLauncher.launch("image/*") },
+                            onRemoveUri = { selectedImageUris = selectedImageUris - it },
+                            onClearUris = { selectedImageUris = emptyList() },
+                            deselectedDeviceIds = deselectedUploadDeviceIds,
+                            onToggleDevice = { id ->
+                                deselectedUploadDeviceIds = if (id in deselectedUploadDeviceIds) {
+                                    deselectedUploadDeviceIds - id
+                                } else {
+                                    deselectedUploadDeviceIds + id
                                 }
-                            }
-                        }
+                            },
+                            uploadState = imageUploadState,
+                            onUpload = {
+                                val targetIds = devices
+                                    .filter { it.isOnline && it.id !in deselectedUploadDeviceIds }
+                                    .map { it.id }
+                                    .toSet()
+                                viewModel.startImageUpload(
+                                    mode = imageUploadMode,
+                                    uris = selectedImageUris,
+                                    poiPixels = poiPixelsText.toIntOrNull() ?: 0,
+                                    flagWidth = flagWidthText.toIntOrNull() ?: 0,
+                                    flagHeight = flagHeightText.toIntOrNull() ?: 0,
+                                    writeMode = imageWriteMode,
+                                    targetDeviceIds = targetIds
+                                )
+                            },
+                            onDismissResult = { viewModel.dismissImageUpload() }
+                        )
+                    }
 
-                        Card(
-                            shape = RoundedCornerShape(20.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(dimens.cardPadding),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Build,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier.size(dimens.iconSize)
-                                )
-                                Text(
-                                    text = "CHƯA CÓ PHÍM CUSTOM",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Black,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Khu vực này sẽ chỉ hiển thị các phím tắt thật sau khi có cấu hình lưu sẵn.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
+                    3 -> {
+                        val editorClips by viewModel.editorClips.collectAsStateWithLifecycle()
+                        val editorPresets by viewModel.editorPresets.collectAsStateWithLifecycle()
+                        val editorTotalSeconds by viewModel.editorTotalSeconds.collectAsStateWithLifecycle()
+                        val editorUploadState by viewModel.editorUploadState.collectAsStateWithLifecycle()
+                        val isTimelineLockedEditor by viewModel.isTimelineLocked.collectAsStateWithLifecycle()
+                        TimelineEditorTab(
+                            devices = devices,
+                            selectedDeviceId = editorSelectedDeviceId,
+                            onSelectDevice = { viewModel.selectEditorDevice(it) },
+                            presetsByDevice = editorPresets,
+                            clipsByDevice = editorClips,
+                            totalSeconds = editorTotalSeconds,
+                            pxPerSec = pxPerSec,
+                            onPxPerSecChange = { pxPerSec = it },
+                            isLocked = isTimelineLockedEditor,
+                            onToggleLock = { viewModel.setTimelineLocked(!isTimelineLockedEditor) },
+                            onPreviewPreset = { deviceId, preset -> viewModel.previewPreset(deviceId, preset.id) },
+                            onAddClip = { deviceId, preset, startSec ->
+                                viewModel.addClip(deviceId, preset.id, preset.name, startSec)
+                            },
+                            onMoveClip = { deviceId, clipId, newStart -> viewModel.moveClip(deviceId, clipId, newStart) },
+                            onResizeClip = { deviceId, clipId, newDur -> viewModel.resizeClip(deviceId, clipId, newDur) },
+                            onRemoveClip = { deviceId, clipId -> viewModel.removeClip(deviceId, clipId) },
+                            onClearDevice = { viewModel.clearDeviceClips(it) },
+                            onExtend = { viewModel.extendEditorTotalSeconds() },
+                            uploadState = editorUploadState,
+                            onUpload = {
+                                // Chỉ NẠP vào playlist 249, không tự chạy. Chạy ở tab Đồng Loạt (All).
+                                viewModel.compileAndUploadEditorTimelines(loop = true)
+                            },
+                            onJumpToAllTab = {
+                                viewModel.setSelectedTab(1)
+                                pendingJumpToTimeline = true
+                            },
+                            onDismissUpload = { viewModel.dismissEditorUpload() }
+                        )
                     }
                 }
                 }
@@ -4679,6 +4754,1051 @@ private fun PresetCleanupPanel(
                     onClick = { onAction(PresetDeleteAction.ALL_EXCEPT_SYSTEM) }
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun TimelineEditorTab(
+    devices: List<WledDevice>,
+    selectedDeviceId: Int?,
+    onSelectDevice: (Int) -> Unit,
+    presetsByDevice: Map<Int, List<EditablePreset>>,
+    clipsByDevice: Map<Int, List<TimelineClip>>,
+    totalSeconds: Int,
+    pxPerSec: Float,
+    onPxPerSecChange: (Float) -> Unit,
+    isLocked: Boolean,
+    onToggleLock: () -> Unit,
+    onPreviewPreset: (deviceId: Int, preset: EditablePreset) -> Unit,
+    onAddClip: (deviceId: Int, preset: EditablePreset, startSec: Float) -> Unit,
+    onMoveClip: (deviceId: Int, clipId: Long, newStartSec: Float) -> Unit,
+    onResizeClip: (deviceId: Int, clipId: Long, newDurationSec: Float) -> Unit,
+    onRemoveClip: (deviceId: Int, clipId: Long) -> Unit,
+    onClearDevice: (deviceId: Int) -> Unit,
+    onExtend: () -> Unit,
+    uploadState: EditorUploadUiState,
+    onUpload: () -> Unit,
+    onJumpToAllTab: () -> Unit,
+    onDismissUpload: () -> Unit
+) {
+    val density = LocalDensity.current
+    val ppsPx = pxPerSec * density.density
+    val onlineDevices = devices.filter { it.isOnline }
+    val selectedDevice = onlineDevices.find { it.id == selectedDeviceId }
+    val presets = selectedDeviceId?.let { presetsByDevice[it] } ?: emptyList()
+
+    val rulerHeight = 22.dp
+    val laneHeight = 46.dp
+    val gutterWidth = 96.dp
+    val contentWidth = (totalSeconds * pxPerSec).dp.coerceAtLeast(1.dp)
+    val boardScroll = rememberScrollState()
+
+    // Drag-and-drop shared state (root coordinates)
+    var dragging by remember { mutableStateOf<EditablePreset?>(null) }
+    var dragPosRoot by remember { mutableStateOf(Offset.Zero) }
+    var selectedLaneRect by remember { mutableStateOf<Rect?>(null) }
+    var rootPos by remember { mutableStateOf(Offset.Zero) }
+
+    // Clip đang chọn (deviceId, clipId) — bật nút xóa ngoài timeline + hiện handle co giãn.
+    var selectedClip by remember { mutableStateOf<Pair<Int, Long>?>(null) }
+    val selectedClipObj = selectedClip?.let { (d, id) -> clipsByDevice[d]?.find { it.id == id } }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { rootPos = it.positionInRoot() }
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // ---- Chọn mạch (đổi list preset + track drop target) ----
+            if (onlineDevices.isEmpty()) {
+                Text(
+                    text = "Không có mạch nào online. Hãy bật thiết bị rồi quay lại.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(8.dp)
+                )
+                return@Column
+            }
+            Text(
+                text = "CHỌN MẠCH ĐỂ LẤY PRESET",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                onlineDevices.forEach { dev ->
+                    val sel = dev.id == selectedDeviceId
+                    if (sel) {
+                        Button(onClick = { onSelectDevice(dev.id) }, shape = RoundedCornerShape(10.dp), modifier = Modifier.height(38.dp)) {
+                            Text(dev.name, maxLines = 1)
+                        }
+                    } else {
+                        OutlinedButton(onClick = { onSelectDevice(dev.id) }, shape = RoundedCornerShape(10.dp), modifier = Modifier.height(38.dp)) {
+                            Text(dev.name, maxLines = 1)
+                        }
+                    }
+                }
+            }
+
+            // ---- Danh sách preset (nguồn kéo) ----
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "PRESET CỦA ${selectedDevice?.name ?: "—"} (giữ & kéo xuống track)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (presets.isEmpty()) {
+                        Text(
+                            text = "Chưa có preset (hoặc đang tải). Chỉ hiện preset ngoài slot hệ thống.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            presets.forEach { preset ->
+                                key(preset.id) {
+                                    var chipRoot by remember { mutableStateOf(Offset.Zero) }
+                                    val isDraggable = !isLocked && selectedDeviceId != null
+                                    Box(
+                                        modifier = Modifier
+                                            .onGloballyPositioned { chipRoot = it.positionInRoot() }
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f))
+                                            // Touch nhanh = phát thử preset; giữ lâu = kéo xuống track.
+                                            .pointerInput(preset.id, selectedDeviceId, isLocked, pxPerSec) {
+                                                awaitEachGesture {
+                                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                                    val longPress = awaitLongPressOrCancellation(down.id)
+                                                    if (longPress == null) {
+                                                        // Thả tay trước khi giữ lâu → tap nhanh → demo preset
+                                                        selectedDeviceId?.let { onPreviewPreset(it, preset) }
+                                                    } else if (isDraggable) {
+                                                        // Giữ lâu → bắt đầu kéo
+                                                        dragging = preset
+                                                        dragPosRoot = chipRoot + longPress.position
+                                                        drag(longPress.id) { change ->
+                                                            dragPosRoot += change.positionChange()
+                                                            change.consume()
+                                                        }
+                                                        val rect = selectedLaneRect
+                                                        val p = dragging
+                                                        val devId = selectedDeviceId
+                                                        if (rect != null && p != null && devId != null && rect.contains(dragPosRoot)) {
+                                                            val t = ((dragPosRoot.x - rect.left) / ppsPx).coerceIn(0f, totalSeconds.toFloat())
+                                                            onAddClip(devId, p, t)
+                                                        }
+                                                        dragging = null
+                                                    }
+                                                }
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = "#${preset.id}  ${preset.name}",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---- Thanh điều khiển: lock / zoom / extend ----
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val lockColor = if (isLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onToggleLock() }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.Edit,
+                        contentDescription = null,
+                        tint = lockColor,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(if (isLocked) "Khóa" else "Sửa", style = MaterialTheme.typography.labelSmall, color = lockColor, fontWeight = FontWeight.Bold)
+                }
+                Text("Zoom", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                Slider(
+                    value = pxPerSec,
+                    onValueChange = onPxPerSecChange,
+                    valueRange = 8f..50f,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedButton(onClick = onExtend, shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 10.dp)) {
+                    Text("+30s", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+
+            // ---- Thanh thao tác clip đang chọn (nút xóa nằm NGOÀI timeline) ----
+            val selDur = selectedClipObj?.durationSec ?: 0f
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        if (selectedClipObj != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (selectedClipObj != null) {
+                    Text(
+                        text = "Đang chọn: #${selectedClipObj.presetId} ${selectedClipObj.presetName} · ${"%.1f".format(selectedClipObj.startSec)}s→${"%.1f".format(selectedClipObj.startSec + selDur)}s",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                } else {
+                    Text(
+                        text = "Chạm vào 1 clip để chọn (rồi sửa thời lượng / xóa).",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Button(
+                    onClick = {
+                        selectedClip?.let { (d, id) -> onRemoveClip(d, id) }
+                        selectedClip = null
+                    },
+                    enabled = selectedClipObj != null && !isLocked,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    contentPadding = PaddingValues(horizontal = 12.dp)
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onError)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Xóa clip", color = MaterialTheme.colorScheme.onError)
+                }
+            }
+
+            // ---- Bảng track ----
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.12f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                    // Cột nhãn thiết bị (cố định)
+                    Column(modifier = Modifier.width(gutterWidth)) {
+                        Spacer(Modifier.height(rulerHeight))
+                        onlineDevices.forEach { dev ->
+                            val sel = dev.id == selectedDeviceId
+                            val count = clipsByDevice[dev.id]?.size ?: 0
+                            Box(
+                                modifier = Modifier
+                                    .height(laneHeight)
+                                    .fillMaxWidth()
+                                    .padding(top = 2.dp, bottom = 2.dp, end = 4.dp)
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(
+                                        if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
+                                    )
+                                    .clickable { onSelectDevice(dev.id) }
+                                    .padding(horizontal = 6.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Column {
+                                    Text(dev.name, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+                                    Text("$count clip", style = MaterialTheme.typography.labelSmall, fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                }
+                            }
+                        }
+                    }
+
+                    // Vùng cuộn ngang: thước + lanes
+                    Box(modifier = Modifier.weight(1f).horizontalScroll(boardScroll)) {
+                        Column(modifier = Modifier.width(contentWidth)) {
+                            EditorRuler(totalSeconds = totalSeconds, pxPerSec = pxPerSec, height = rulerHeight)
+                            onlineDevices.forEach { dev ->
+                                val laneClips = clipsByDevice[dev.id] ?: emptyList()
+                                val sel = dev.id == selectedDeviceId
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(laneHeight)
+                                        .padding(vertical = 2.dp)
+                                        .clip(RoundedCornerShape(5.dp))
+                                        .background(
+                                            if (sel && dragging != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                            else MaterialTheme.colorScheme.surface.copy(alpha = 0.35f)
+                                        )
+                                        .then(
+                                            if (sel) Modifier.onGloballyPositioned { c ->
+                                                selectedLaneRect = Rect(
+                                                    c.positionInRoot(),
+                                                    androidx.compose.ui.geometry.Size(c.size.width.toFloat(), c.size.height.toFloat())
+                                                )
+                                            } else Modifier
+                                        )
+                                        // Chạm vùng trống của lane → bỏ chọn clip.
+                                        .pointerInput(Unit) {
+                                            detectTapGestures { selectedClip = null }
+                                        }
+                                ) {
+                                    laneClips.forEach { clip ->
+                                        key(clip.id) {
+                                            // Cạnh các clip khác trên lane → mốc snap khi kéo/giãn.
+                                            val snapEdges = laneClips
+                                                .filter { it.id != clip.id }
+                                                .flatMap { listOf(it.startSec, it.startSec + it.durationSec) }
+                                            EditorClipBlock(
+                                                clip = clip,
+                                                pxPerSec = pxPerSec,
+                                                isLocked = isLocked,
+                                                isSelected = selectedClip == (dev.id to clip.id),
+                                                snapEdgesSec = snapEdges,
+                                                onSelect = { selectedClip = dev.id to clip.id },
+                                                onMove = { newStart -> onMoveClip(dev.id, clip.id, newStart) },
+                                                onResize = { newDur -> onResizeClip(dev.id, clip.id, newDur) }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---- Hành động ----
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (selectedDeviceId != null && (clipsByDevice[selectedDeviceId]?.isNotEmpty() == true)) {
+                    OutlinedButton(
+                        onClick = { onClearDevice(selectedDeviceId) },
+                        enabled = !isLocked,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Xóa track")
+                    }
+                }
+                Button(
+                    onClick = onUpload,
+                    enabled = !uploadState.isRunning,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f).height(46.dp)
+                ) {
+                    if (uploadState.isRunning) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("ĐANG NẠP…", fontWeight = FontWeight.Bold)
+                    } else {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("NẠP VÀO PLAYLIST 249", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // Chạy phải qua tab Đồng Loạt (All): nút chuyển nhanh + cuộn tới bảng timeline.
+            OutlinedButton(
+                onClick = onJumpToAllTab,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(44.dp)
+            ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("SANG TAB ĐỒNG LOẠT (ALL) ĐỂ CHẠY", fontWeight = FontWeight.Bold)
+            }
+
+            if (uploadState.finished || uploadState.error != null) {
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        uploadState.error?.let {
+                            Text("Lỗi: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                        }
+                        uploadState.results.forEach { r ->
+                            Text(r, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                        OutlinedButton(onClick = onDismissUpload, shape = RoundedCornerShape(10.dp), modifier = Modifier.align(Alignment.End)) {
+                            Text("Đóng")
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- Ghost theo ngón tay khi kéo ----
+        dragging?.let { p ->
+            val gx = dragPosRoot.x - rootPos.x
+            val gy = dragPosRoot.y - rootPos.y
+            val halfW = with(density) { 50.dp.toPx() }
+            val halfH = with(density) { 16.dp.toPx() }
+            Box(
+                modifier = Modifier
+                    .offset { androidx.compose.ui.unit.IntOffset(Math.round(gx - halfW), Math.round(gy - halfH)) }
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primary)
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Text("#${p.id} ${p.name}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary, maxLines = 1)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditorRuler(totalSeconds: Int, pxPerSec: Float, height: androidx.compose.ui.unit.Dp) {
+    val tickStep = when {
+        pxPerSec < 12f -> 10
+        pxPerSec < 25f -> 5
+        else -> 2
+    }
+    val tickColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+    val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    Box(
+        modifier = Modifier
+            .width((totalSeconds * pxPerSec).dp.coerceAtLeast(1.dp))
+            .height(height)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val h = size.height
+            var s = 0
+            while (s <= totalSeconds) {
+                val x = (s * pxPerSec).dp.toPx()
+                drawLine(
+                    color = tickColor,
+                    start = Offset(x, h),
+                    end = Offset(x, h - 8.dp.toPx()),
+                    strokeWidth = 1.5.dp.toPx()
+                )
+                s += tickStep
+            }
+        }
+        for (sec in 0..totalSeconds step tickStep) {
+            Text(
+                text = "${sec}s",
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 8.sp,
+                color = labelColor,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = (sec * pxPerSec).dp)
+                    .padding(start = 2.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditorClipBlock(
+    clip: TimelineClip,
+    pxPerSec: Float,
+    isLocked: Boolean,
+    isSelected: Boolean,
+    snapEdgesSec: List<Float>,
+    onSelect: () -> Unit,
+    onMove: (Float) -> Unit,
+    onResize: (Float) -> Unit
+) {
+    val density = LocalDensity.current
+    val ppsPx = pxPerSec * density.density
+    val minWidthPx = with(density) { 12.dp.toPx() }
+    val snapThresholdPx = with(density) { 11.dp.toPx() }
+    // Vị trí/độ rộng tính bằng PIXEL, đọc trong layout/placement phase để kéo MƯỢT
+    // (chỉ remeasure/replace node này, không recompose mỗi frame).
+    // State ỔN ĐỊNH theo clip.id để cùng object mà gesture ghi và offset/layout đọc.
+    val startPx = remember(clip.id) { mutableFloatStateOf(clip.startSec * ppsPx) }
+    val widthPx = remember(clip.id) { mutableFloatStateOf((clip.durationSec * ppsPx).coerceAtLeast(minWidthPx)) }
+    LaunchedEffect(clip.startSec, clip.durationSec, pxPerSec) {
+        startPx.floatValue = clip.startSec * ppsPx
+        widthPx.floatValue = (clip.durationSec * ppsPx).coerceAtLeast(minWidthPx)
+    }
+
+    // Hút (snap) một vị trí px về cạnh clip lân cận hoặc mốc giây tròn nếu đủ gần.
+    fun snapPx(valuePx: Float): Float {
+        var best = valuePx
+        var bestDist = snapThresholdPx
+        for (e in snapEdgesSec) {
+            val ex = e * ppsPx
+            val d = kotlin.math.abs(ex - valuePx)
+            if (d < bestDist) { bestDist = d; best = ex }
+        }
+        val roundedSecPx = (valuePx / ppsPx).roundToInt() * ppsPx
+        val d2 = kotlin.math.abs(roundedSecPx - valuePx)
+        if (d2 < bestDist) { best = roundedSecPx }
+        return best
+    }
+
+    Box(
+        modifier = Modifier
+            .offset { androidx.compose.ui.unit.IntOffset(startPx.floatValue.roundToInt(), 0) }
+            .layout { measurable, constraints ->
+                val w = widthPx.floatValue.roundToInt().coerceAtLeast(minWidthPx.roundToInt())
+                val placeable = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+                layout(w, placeable.height) { placeable.place(0, 0) }
+            }
+            .fillMaxHeight()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    if (isSelected) listOf(Color(0xFF00E0FF), Color(0xFFB36BFF))
+                    else listOf(Color(0xFF00B0FF), Color(0xFF8B5CF6))
+                )
+            )
+            .then(
+                if (isSelected) Modifier.border(2.dp, Color.White, RoundedCornerShape(5.dp))
+                else Modifier
+            )
+            // Chạm = chọn clip
+            .pointerInput(clip.id) {
+                detectTapGestures { onSelect() }
+            }
+            // Kéo thân = di chuyển (có snap), đồng thời chọn clip
+            .then(
+                if (!isLocked) Modifier.pointerInput(clip.id, pxPerSec, snapEdgesSec) {
+                    detectDragGestures(
+                        onDragStart = { onSelect() },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            val raw = (startPx.floatValue + amount.x).coerceAtLeast(0f)
+                            startPx.floatValue = snapPx(raw).coerceAtLeast(0f)
+                        },
+                        onDragEnd = { onMove(startPx.floatValue / ppsPx) }
+                    )
+                } else Modifier
+            )
+    ) {
+        Text(
+            text = clip.presetName,
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 8.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 6.dp, end = if (isSelected) 26.dp else 8.dp)
+        )
+        // Handle co giãn — to & dễ chạm, chỉ hiện khi clip được chọn.
+        if (!isLocked && isSelected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .width(24.dp)
+                    .padding(vertical = 3.dp, horizontal = 2.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.White.copy(alpha = 0.9f))
+                    .pointerInput(clip.id, pxPerSec, snapEdgesSec) {
+                        detectDragGestures(
+                            onDragStart = { onSelect() },
+                            onDrag = { change, amount ->
+                                change.consume()
+                                val rawW = (widthPx.floatValue + amount.x).coerceAtLeast(minWidthPx)
+                                val snappedEnd = snapPx(startPx.floatValue + rawW)
+                                widthPx.floatValue = (snappedEnd - startPx.floatValue).coerceAtLeast(minWidthPx)
+                            },
+                            onDragEnd = { onResize(widthPx.floatValue / ppsPx) }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    repeat(2) {
+                        Box(
+                            modifier = Modifier
+                                .width(2.dp)
+                                .height(14.dp)
+                                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(1.dp))
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImageUploadTab(
+    devices: List<WledDevice>,
+    onlineStats: Map<Int, DevicePresetStorageStats>,
+    mode: ImageUploadMode,
+    onModeChange: (ImageUploadMode) -> Unit,
+    poiPixelsText: String,
+    onPoiPixelsChange: (String) -> Unit,
+    flagWidthText: String,
+    onFlagWidthChange: (String) -> Unit,
+    flagHeightText: String,
+    onFlagHeightChange: (String) -> Unit,
+    writeMode: ImageWriteMode,
+    onWriteModeChange: (ImageWriteMode) -> Unit,
+    selectedUris: List<Uri>,
+    onPickImages: () -> Unit,
+    onRemoveUri: (Uri) -> Unit,
+    onClearUris: () -> Unit,
+    deselectedDeviceIds: Set<Int>,
+    onToggleDevice: (Int) -> Unit,
+    uploadState: ImageUploadUiState,
+    onUpload: () -> Unit,
+    onDismissResult: () -> Unit
+) {
+    val dimens = LocalAppDimens.current
+    val onlineDevices = devices.filter { it.isOnline }
+    val selectedDeviceCount = onlineDevices.count { it.id !in deselectedDeviceIds }
+
+    val poiPixels = poiPixelsText.toIntOrNull()
+    val poiValid = poiPixels != null && poiPixels in 15..145
+    val flagW = flagWidthText.toIntOrNull()
+    val flagH = flagHeightText.toIntOrNull()
+    val flagValid = flagW != null && flagW >= 1 && flagH != null && flagH >= 1
+    val paramsValid = if (mode == ImageUploadMode.POI) poiValid else flagValid
+
+    val isRunning = uploadState.isRunning
+    val canUpload = !isRunning && selectedUris.isNotEmpty() && selectedDeviceCount > 0 && paramsValid
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // ---- Tiêu đề ----
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.Build, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Text(
+                text = "TẠO PRESET HÌNH ẢNH",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Black,
+                color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 0.5.sp
+            )
+        }
+
+        // ---- Chọn mode POI / Cờ LED ----
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            UploadModeButton(
+                label = "POI (thanh quay)",
+                selected = mode == ImageUploadMode.POI,
+                enabled = !isRunning,
+                onClick = { onModeChange(ImageUploadMode.POI) },
+                modifier = Modifier.weight(1f)
+            )
+            UploadModeButton(
+                label = "Cờ LED (ma trận)",
+                selected = mode == ImageUploadMode.FLAG,
+                enabled = !isRunning,
+                onClick = { onModeChange(ImageUploadMode.FLAG) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // ---- Chọn ảnh ----
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onPickImages,
+                        enabled = !isRunning,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("CHỌN ẢNH", fontWeight = FontWeight.Bold)
+                    }
+                    if (selectedUris.isNotEmpty()) {
+                        OutlinedButton(
+                            onClick = onClearUris,
+                            enabled = !isRunning,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Xóa hết")
+                        }
+                    }
+                }
+                if (selectedUris.isEmpty()) {
+                    Text(
+                        text = "Chọn 1 hoặc nhiều ảnh (PNG/JPG/GIF). Mỗi ảnh = 1 preset.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                } else {
+                    Text(
+                        text = "Đã chọn ${selectedUris.size} ảnh",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    selectedUris.forEachIndexed { index, uri ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "${index + 1}. ${uri.lastPathSegment ?: uri.toString()}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { onRemoveUri(uri) },
+                                enabled = !isRunning,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Bỏ ảnh", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- Tham số theo mode ----
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (mode == ImageUploadMode.POI) {
+                    OutlinedTextField(
+                        value = poiPixelsText,
+                        onValueChange = { onPoiPixelsChange(it.filter { c -> c.isDigit() }.take(3)) },
+                        label = { Text("Pixel LEDs POI (15–145)") },
+                        singleLine = true,
+                        isError = poiPixelsText.isNotEmpty() && !poiValid,
+                        enabled = !isRunning,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "Đúng bằng số LED vật lý trên thanh POI. Khuyến nghị 15–72 để ảnh < 63KB.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = flagWidthText,
+                            onValueChange = { onFlagWidthChange(it.filter { c -> c.isDigit() }.take(3)) },
+                            label = { Text("Chiều rộng (cột)") },
+                            singleLine = true,
+                            isError = flagWidthText.isNotEmpty() && (flagW == null || flagW < 1),
+                            enabled = !isRunning,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = flagHeightText,
+                            onValueChange = { onFlagHeightChange(it.filter { c -> c.isDigit() }.take(3)) },
+                            label = { Text("Chiều cao (hàng)") },
+                            singleLine = true,
+                            isError = flagHeightText.isNotEmpty() && (flagH == null || flagH < 1),
+                            enabled = !isRunning,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Text(
+                        text = "Đúng bằng số cột × hàng LED của ma trận. Tối đa 256×256 (tự co nếu vượt). Hỗ trợ GIF động.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                    )
+                }
+            }
+        }
+
+        // ---- Chế độ ghi slot ----
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            UploadModeButton(
+                label = "Ghi tiếp slot trống",
+                selected = writeMode == ImageWriteMode.APPEND_EMPTY,
+                enabled = !isRunning,
+                onClick = { onWriteModeChange(ImageWriteMode.APPEND_EMPTY) },
+                modifier = Modifier.weight(1f)
+            )
+            UploadModeButton(
+                label = "Ghi đè từ ID 1",
+                selected = writeMode == ImageWriteMode.OVERWRITE_FROM_1,
+                enabled = !isRunning,
+                onClick = { onWriteModeChange(ImageWriteMode.OVERWRITE_FROM_1) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+        if (writeMode == ImageWriteMode.OVERWRITE_FROM_1) {
+            Text(
+                text = "⚠ Sẽ xóa toàn bộ preset logo/ảnh (slot 1–59) và file ảnh cũ trước khi ghi lại từ ID 1.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        // ---- Chọn thiết bị online ----
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "MẠCH ĐÍCH ($selectedDeviceCount/${onlineDevices.size} online)",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (onlineDevices.isEmpty()) {
+                    Text(
+                        text = "Không có mạch nào online.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else {
+                    onlineDevices.forEach { device ->
+                        val checked = device.id !in deselectedDeviceIds
+                        val stats = onlineStats[device.id]
+                        val freeLogo = if (stats != null) (stats.logoCapacity - stats.logoUsed).coerceAtLeast(0) else null
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !isRunning) { onToggleDevice(device.id) },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { if (!isRunning) onToggleDevice(device.id) },
+                                enabled = !isRunning
+                            )
+                            Text(
+                                text = device.name,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = freeLogo?.let { "trống $it" } ?: "—",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- Nút Upload ----
+        Button(
+            onClick = onUpload,
+            enabled = canUpload,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+        ) {
+            if (isRunning) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("ĐANG UPLOAD…", fontWeight = FontWeight.Bold)
+            } else {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = if (mode == ImageUploadMode.POI) "UPLOAD POI" else "UPLOAD CỜ LED",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // ---- Tiến độ / kết quả ----
+        if (isRunning || uploadState.finished || uploadState.error != null) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (isRunning) {
+                        val total = uploadState.total.coerceAtLeast(1)
+                        LinearProgressIndicator(
+                            progress = { (uploadState.completed.toFloat() / total).coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                        )
+                        Text(
+                            text = "${uploadState.completed}/${uploadState.total} · ${uploadState.progressNote}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+
+                    uploadState.error?.let { err ->
+                        Text(
+                            text = "Lỗi: $err",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (uploadState.warnings.isNotEmpty()) {
+                        uploadState.warnings.forEach { w ->
+                            Text(
+                                text = "• $w",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+
+                    if (uploadState.results.isNotEmpty()) {
+                        uploadState.results.forEach { r ->
+                            val parts = buildString {
+                                append("OK ${r.ok}")
+                                if (r.failed > 0) append(" · Lỗi ${r.failed}")
+                                if (r.skipped > 0) append(" · Bỏ ${r.skipped}")
+                                if (r.error != null) append(" · ${r.error}")
+                            }
+                            Text(
+                                text = "${r.deviceName}: $parts",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (r.failed > 0 || r.error != null) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    if (uploadState.finished || uploadState.error != null) {
+                        OutlinedButton(
+                            onClick = onDismissResult,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("Đóng")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UploadModeButton(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (selected) {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            shape = RoundedCornerShape(10.dp),
+            modifier = modifier.height(42.dp)
+        ) {
+            Text(label, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            enabled = enabled,
+            shape = RoundedCornerShape(10.dp),
+            modifier = modifier.height(42.dp)
+        ) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
