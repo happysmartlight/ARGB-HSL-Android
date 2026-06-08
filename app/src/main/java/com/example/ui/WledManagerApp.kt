@@ -4800,6 +4800,8 @@ private fun TimelineEditorTab(
 
     // Clip đang chọn (deviceId, clipId) — bật nút xóa ngoài timeline + hiện handle co giãn.
     var selectedClip by remember { mutableStateOf<Pair<Int, Long>?>(null) }
+    // Khi đang kéo/giãn clip → KHOÁ cuộn ngang board để cuộn không "cướp" gesture gây giật.
+    var clipDragActive by remember { mutableStateOf(false) }
     val selectedClipObj = selectedClip?.let { (d, id) -> clipsByDevice[d]?.find { it.id == id } }
 
     Box(
@@ -5046,8 +5048,11 @@ private fun TimelineEditorTab(
                         }
                     }
 
-                    // Vùng cuộn ngang: thước + lanes
-                    Box(modifier = Modifier.weight(1f).horizontalScroll(boardScroll)) {
+                    // Vùng cuộn ngang: thước + lanes. KHOÁ cuộn khi đã chọn 1 clip hoặc đang kéo
+                    // (để cuộn ngang không "cướp" gesture của clip gây giật). Bỏ chọn (chạm vùng
+                    // trống) để cuộn lại.
+                    val boardScrollEnabled = selectedClip == null && !clipDragActive
+                    Box(modifier = Modifier.weight(1f).horizontalScroll(boardScroll, enabled = boardScrollEnabled)) {
                         Column(modifier = Modifier.width(contentWidth)) {
                             EditorRuler(totalSeconds = totalSeconds, pxPerSec = pxPerSec, height = rulerHeight)
                             onlineDevices.forEach { dev ->
@@ -5126,6 +5131,7 @@ private fun TimelineEditorTab(
                                     return best
                                 }
                                 fun startDrag(id: Long, resize: Boolean) {
+                                    clipDragActive = true
                                     selectedClip = dev.id to id
                                     draggingId = id; draggingResize = resize; dragAccumPx = 0f
                                     posStates.keys.forEach { cid ->
@@ -5157,6 +5163,7 @@ private fun TimelineEditorTab(
                                         Triple(id, s / ppsPx, w / ppsPx)
                                     }
                                     draggingId = null
+                                    clipDragActive = false
                                     if (layout.isNotEmpty()) onApplyLayout(dev.id, layout)
                                 }
 
