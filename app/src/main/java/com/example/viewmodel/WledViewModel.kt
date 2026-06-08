@@ -2982,61 +2982,50 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     fun addClip(deviceId: Int, presetId: Int, presetName: String, startSec: Float, durationSec: Float = 5f) {
         val existing = _editorClips.value[deviceId] ?: emptyList()
         val dur = durationSec.coerceAtLeast(EDITOR_MIN_CLIP_SEC)
-        // Né chồng lấn: đẩy điểm bắt đầu sang phải qua các clip đang chiếm chỗ.
-        val start = resolveNonOverlapStart(existing, startSec.coerceAtLeast(0f), dur)
         val clip = TimelineClip(
             id = nextEditorClipId++,
             deviceId = deviceId,
             presetId = presetId,
             presetName = presetName,
-            startSec = start,
+            startSec = startSec.coerceAtLeast(0f),
             durationSec = dur
         )
-        updateDeviceClips(deviceId, existing + clip)
+        // Clip mới "chiếm chỗ", đẩy các clip bị chồng sang phải theo dây chuyền.
+        updateDeviceClips(deviceId, rippleResolve(existing + clip, clip.id))
     }
 
     fun moveClip(deviceId: Int, clipId: Long, newStartSec: Float) {
         val list = _editorClips.value[deviceId] ?: return
-        val clip = list.find { it.id == clipId } ?: return
-        val sorted = list.sortedBy { it.startSec }
-        val sidx = sorted.indexOfFirst { it.id == clipId }
-        // Giữ thứ tự, kẹp giữa clip trước & sau để không đè lên nhau.
-        val prevEnd = if (sidx > 0) sorted[sidx - 1].run { startSec + durationSec } else 0f
-        val nextStart = if (sidx < sorted.lastIndex) sorted[sidx + 1].startSec else Float.MAX_VALUE
-        val upper = (nextStart - clip.durationSec).coerceAtLeast(prevEnd)
-        val clamped = newStartSec.coerceIn(prevEnd, upper)
-        updateDeviceClips(deviceId, list.map { if (it.id == clipId) it.copy(startSec = clamped) else it })
+        val moved = list.map { if (it.id == clipId) it.copy(startSec = newStartSec.coerceAtLeast(0f)) else it }
+        updateDeviceClips(deviceId, rippleResolve(moved, clipId))
     }
 
     fun resizeClip(deviceId: Int, clipId: Long, newDurationSec: Float) {
         val list = _editorClips.value[deviceId] ?: return
-        val clip = list.find { it.id == clipId } ?: return
-        val sorted = list.sortedBy { it.startSec }
-        val sidx = sorted.indexOfFirst { it.id == clipId }
-        val nextStart = if (sidx < sorted.lastIndex) sorted[sidx + 1].startSec else Float.MAX_VALUE
-        val maxDur = (nextStart - clip.startSec).coerceAtLeast(EDITOR_MIN_CLIP_SEC)
-        val clamped = newDurationSec.coerceIn(EDITOR_MIN_CLIP_SEC, maxDur)
-        updateDeviceClips(deviceId, list.map { if (it.id == clipId) it.copy(durationSec = clamped) else it })
+        val resized = list.map {
+            if (it.id == clipId) it.copy(durationSec = newDurationSec.coerceAtLeast(EDITOR_MIN_CLIP_SEC)) else it
+        }
+        updateDeviceClips(deviceId, rippleResolve(resized, clipId))
     }
 
-    /** Tìm điểm bắt đầu gần [start] nhất mà clip [duration] không đè lên clip khác. */
-    private fun resolveNonOverlapStart(others: List<TimelineClip>, start: Float, duration: Float): Float {
-        val sorted = others.sortedBy { it.startSec }
-        var s = start.coerceAtLeast(0f)
-        var changed = true
-        var guard = 0
-        while (changed && guard++ < 2000) {
-            changed = false
-            for (c in sorted) {
-                val cs = c.startSec
-                val ce = c.startSec + c.durationSec
-                if (s < ce && s + duration > cs) {
-                    s = ce
-                    changed = true
-                }
-            }
+    /**
+     * Giải chồng lấn kiểu "ripple" như TikTok: clip [anchorId] vừa được kéo/giãn được ƯU TIÊN
+     * giữ vị trí; mọi clip bị đè sẽ bị ĐẨY SANG PHẢI nối tiếp (cascade). Kéo qua điểm bắt đầu
+     * của clip khác → tự đổi thứ tự. Giữ nguyên khoảng trống ở những chỗ không đè.
+     */
+    private fun rippleResolve(clips: List<TimelineClip>, anchorId: Long): List<TimelineClip> {
+        // Sắp theo startSec; khi trùng start, anchor đứng trước để "giành" chỗ.
+        val sorted = clips.sortedWith(
+            compareBy({ it.startSec }, { if (it.id == anchorId) 0 else 1 })
+        )
+        var prevEnd = Float.NEGATIVE_INFINITY
+        val out = ArrayList<TimelineClip>(sorted.size)
+        for (c in sorted) {
+            val start = if (c.startSec < prevEnd) prevEnd else c.startSec
+            out += if (start != c.startSec) c.copy(startSec = start) else c
+            prevEnd = start + c.durationSec
         }
-        return s
+        return out
     }
 
     fun removeClip(deviceId: Int, clipId: Long) {
