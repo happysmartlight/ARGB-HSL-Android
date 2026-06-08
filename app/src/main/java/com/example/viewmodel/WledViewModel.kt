@@ -368,6 +368,8 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     val editorUploadState: StateFlow<EditorUploadUiState> = _editorUploadState.asStateFlow()
 
     private var nextEditorClipId = 1L
+    // Thời lượng clip tối thiểu trên timeline (giây) — cho phép thu nhỏ "hết cỡ".
+    private val EDITOR_MIN_CLIP_SEC = 0.2f
 
     init {
         // Start background polling to check online status
@@ -2979,7 +2981,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addClip(deviceId: Int, presetId: Int, presetName: String, startSec: Float, durationSec: Float = 5f) {
         val existing = _editorClips.value[deviceId] ?: emptyList()
-        val dur = durationSec.coerceAtLeast(0.5f)
+        val dur = durationSec.coerceAtLeast(EDITOR_MIN_CLIP_SEC)
         // Né chồng lấn: đẩy điểm bắt đầu sang phải qua các clip đang chiếm chỗ.
         val start = resolveNonOverlapStart(existing, startSec.coerceAtLeast(0f), dur)
         val clip = TimelineClip(
@@ -3012,8 +3014,8 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         val sorted = list.sortedBy { it.startSec }
         val sidx = sorted.indexOfFirst { it.id == clipId }
         val nextStart = if (sidx < sorted.lastIndex) sorted[sidx + 1].startSec else Float.MAX_VALUE
-        val maxDur = (nextStart - clip.startSec).coerceAtLeast(0.5f)
-        val clamped = newDurationSec.coerceIn(0.5f, maxDur)
+        val maxDur = (nextStart - clip.startSec).coerceAtLeast(EDITOR_MIN_CLIP_SEC)
+        val clamped = newDurationSec.coerceIn(EDITOR_MIN_CLIP_SEC, maxDur)
         updateDeviceClips(deviceId, list.map { if (it.id == clipId) it.copy(durationSec = clamped) else it })
     }
 

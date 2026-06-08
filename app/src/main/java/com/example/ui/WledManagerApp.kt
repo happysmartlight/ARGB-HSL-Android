@@ -5245,8 +5245,9 @@ private fun EditorClipBlock(
 ) {
     val density = LocalDensity.current
     val ppsPx = pxPerSec * density.density
-    val minWidthPx = with(density) { 12.dp.toPx() }
-    val snapThresholdPx = with(density) { 11.dp.toPx() }
+    val minWidthPx = with(density) { 5.dp.toPx() }
+    val snapThresholdPx = with(density) { 10.dp.toPx() }
+    val minClipSec = 0.2f
     // Vị trí/độ rộng tính bằng PIXEL, đọc trong layout/placement phase để kéo MƯỢT
     // (chỉ remeasure/replace node này, không recompose mỗi frame).
     // State ỔN ĐỊNH theo clip.id để cùng object mà gesture ghi và offset/layout đọc.
@@ -5297,17 +5298,20 @@ private fun EditorClipBlock(
             .pointerInput(clip.id) {
                 detectTapGestures { onSelect() }
             }
-            // Kéo thân = di chuyển (có snap), đồng thời chọn clip
+            // Kéo thân = di chuyển. Kéo TỰ DO (mượt), chỉ snap khi THẢ TAY.
             .then(
                 if (!isLocked) Modifier.pointerInput(clip.id, pxPerSec, snapEdgesSec) {
                     detectDragGestures(
                         onDragStart = { onSelect() },
                         onDrag = { change, amount ->
                             change.consume()
-                            val raw = (startPx.floatValue + amount.x).coerceAtLeast(0f)
-                            startPx.floatValue = snapPx(raw).coerceAtLeast(0f)
+                            startPx.floatValue = (startPx.floatValue + amount.x).coerceAtLeast(0f)
                         },
-                        onDragEnd = { onMove(startPx.floatValue / ppsPx) }
+                        onDragEnd = {
+                            val snapped = snapPx(startPx.floatValue).coerceAtLeast(0f)
+                            startPx.floatValue = snapped
+                            onMove(snapped / ppsPx)
+                        }
                     )
                 } else Modifier
             )
@@ -5330,20 +5334,29 @@ private fun EditorClipBlock(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
-                    .width(24.dp)
+                    .width(20.dp)
                     .padding(vertical = 3.dp, horizontal = 2.dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(Color.White.copy(alpha = 0.9f))
                     .pointerInput(clip.id, pxPerSec, snapEdgesSec) {
                         detectDragGestures(
                             onDragStart = { onSelect() },
+                            // Co giãn TỰ DO (mượt): chỉ cộng dồn delta, không snap mỗi frame.
                             onDrag = { change, amount ->
                                 change.consume()
-                                val rawW = (widthPx.floatValue + amount.x).coerceAtLeast(minWidthPx)
-                                val snappedEnd = snapPx(startPx.floatValue + rawW)
-                                widthPx.floatValue = (snappedEnd - startPx.floatValue).coerceAtLeast(minWidthPx)
+                                widthPx.floatValue = (widthPx.floatValue + amount.x).coerceAtLeast(minWidthPx)
                             },
-                            onDragEnd = { onResize(widthPx.floatValue / ppsPx) }
+                            // Snap khi THẢ TAY; clip rất ngắn (<0.6s) thì GIỮ NGUYÊN để thu nhỏ hết cỡ.
+                            onDragEnd = {
+                                val rawDur = widthPx.floatValue / ppsPx
+                                val finalDur = (if (rawDur < 0.6f) {
+                                    rawDur
+                                } else {
+                                    (snapPx(startPx.floatValue + widthPx.floatValue) - startPx.floatValue) / ppsPx
+                                }).coerceAtLeast(minClipSec)
+                                widthPx.floatValue = (finalDur * ppsPx).coerceAtLeast(minWidthPx)
+                                onResize(finalDur)
+                            }
                         )
                     },
                 contentAlignment = Alignment.Center
