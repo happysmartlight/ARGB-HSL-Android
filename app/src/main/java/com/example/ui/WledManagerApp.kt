@@ -5096,16 +5096,22 @@ private fun TimelineEditorTab(
                                             else posStates[id]?.floatValue = bs
                                         }
                                     } else {
+                                        // Phân nhóm trái/phải theo VỊ TRÍ GỐC (cố định lúc bắt đầu kéo) — KHÔNG
+                                        // phân theo tâm mỗi frame, nên clip không "lật" qua lại gây giật/nhảy.
                                         val aFinger = ((baseStart[anchor] ?: 0f) + dragAccumPx).coerceAtLeast(0f)
-                                        val aCenter = aFinger + aw / 2f
-                                        val left = otherIds.filter { (baseStart[it]!! + (baseWidth[it] ?: 0f) / 2f) <= aCenter }.sortedBy { baseStart[it]!! }
-                                        val right = otherIds.filter { (baseStart[it]!! + (baseWidth[it] ?: 0f) / 2f) > aCenter }.sortedBy { baseStart[it]!! }
-                                        val leftEnd = left.maxOfOrNull { baseStart[it]!! + (baseWidth[it] ?: 0f) } ?: 0f
-                                        val aStart = maxOf(aFinger, leftEnd).coerceAtLeast(0f)
+                                        val anchorBase = baseStart[anchor] ?: 0f
+                                        val leftIds = otherIds.filter { (baseStart[it] ?: 0f) < anchorBase }
+                                        val rightIds = otherIds.filter { (baseStart[it] ?: 0f) >= anchorBase }
+                                        val leftEnd = leftIds.maxOfOrNull { (baseStart[it] ?: 0f) + (baseWidth[it] ?: 0f) } ?: 0f
+                                        // Kéo phải: đẩy các clip bên phải (ripple). Kéo trái: chặn ở mép phải nhóm trái.
+                                        val aStart = maxOf(aFinger, leftEnd)
                                         posStates[anchor]?.floatValue = aStart
-                                        left.forEach { posStates[it]?.floatValue = baseStart[it]!! }
+                                        leftIds.forEach { posStates[it]?.floatValue = baseStart[it]!! }
                                         var run = aStart + aw
-                                        right.forEach { id -> val bs = baseStart[id]!!; val bw = baseWidth[id] ?: 0f; val s = maxOf(bs, run); posStates[id]?.floatValue = s; run = s + bw }
+                                        rightIds.sortedBy { baseStart[it]!! }.forEach { id ->
+                                            val bs = baseStart[id]!!; val bw = baseWidth[id] ?: 0f
+                                            val s = maxOf(bs, run); posStates[id]?.floatValue = s; run = s + bw
+                                        }
                                     }
                                 }
                                 fun snapPx(px: Float, excludeId: Long): Float {
