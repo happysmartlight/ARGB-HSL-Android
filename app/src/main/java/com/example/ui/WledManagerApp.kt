@@ -4412,8 +4412,7 @@ fun DeviceControlSection(
                             onAddClip = { deviceId, preset, startSec ->
                                 viewModel.addClip(deviceId, preset.id, preset.name, startSec)
                             },
-                            onMoveClip = { deviceId, clipId, newStart -> viewModel.moveClip(deviceId, clipId, newStart) },
-                            onResizeClip = { deviceId, clipId, newDur -> viewModel.resizeClip(deviceId, clipId, newDur) },
+                            onApplyLayout = { deviceId, layout -> viewModel.setClipLayout(deviceId, layout) },
                             onRemoveClip = { deviceId, clipId -> viewModel.removeClip(deviceId, clipId) },
                             onClearDevice = { viewModel.clearDeviceClips(it) },
                             onExtend = { viewModel.extendEditorTotalSeconds() },
@@ -4772,8 +4771,7 @@ private fun TimelineEditorTab(
     onToggleLock: () -> Unit,
     onPreviewPreset: (deviceId: Int, preset: EditablePreset) -> Unit,
     onAddClip: (deviceId: Int, preset: EditablePreset, startSec: Float) -> Unit,
-    onMoveClip: (deviceId: Int, clipId: Long, newStartSec: Float) -> Unit,
-    onResizeClip: (deviceId: Int, clipId: Long, newDurationSec: Float) -> Unit,
+    onApplyLayout: (deviceId: Int, layout: List<Triple<Long, Float, Float>>) -> Unit,
     onRemoveClip: (deviceId: Int, clipId: Long) -> Unit,
     onClearDevice: (deviceId: Int) -> Unit,
     onExtend: () -> Unit,
@@ -5055,6 +5053,107 @@ private fun TimelineEditorTab(
                             onlineDevices.forEach { dev ->
                                 val laneClips = clipsByDevice[dev.id] ?: emptyList()
                                 val sel = dev.id == selectedDeviceId
+
+                                // Vị trí/độ rộng px (hoisted) — đọc ở LAYOUT-PHASE để mượt; cập nhật khi kéo
+                                // để các clip khác DẠT realtime (ripple), không bao giờ cho chồng lấn.
+                                val minClipWidthPx = with(density) { 5.dp.toPx() }
+                                val clipSnapPx = with(density) { 10.dp.toPx() }
+                                val posStates = remember(dev.id) { mutableMapOf<Long, MutableFloatState>() }
+                                val widStates = remember(dev.id) { mutableMapOf<Long, MutableFloatState>() }
+                                var draggingId by remember(dev.id) { mutableStateOf<Long?>(null) }
+                                var draggingResize by remember(dev.id) { mutableStateOf(false) }
+                                var dragAccumPx by remember(dev.id) { mutableFloatStateOf(0f) }
+                                val baseStart = remember(dev.id) { mutableMapOf<Long, Float>() }
+                                val baseWidth = remember(dev.id) { mutableMapOf<Long, Float>() }
+
+                                // Tạo state cho clip mới + đồng bộ lại từ VM khi KHÔNG kéo.
+                                val clipsKey = laneClips.joinToString(",") { "${it.id}:${it.startSec}:${it.durationSec}" }
+                                LaunchedEffect(clipsKey, pxPerSec) {
+                                    if (draggingId != null) return@LaunchedEffect
+                                    val ids = HashSet<Long>()
+                                    laneClips.forEach { c ->
+                                        ids.add(c.id)
+                                        posStates.getOrPut(c.id) { mutableFloatStateOf(0f) }.floatValue = c.startSec * ppsPx
+                                        widStates.getOrPut(c.id) { mutableFloatStateOf(0f) }.floatValue = (c.durationSec * ppsPx).coerceAtLeast(minClipWidthPx)
+                                    }
+                                    posStates.keys.retainAll(ids); widStates.keys.retainAll(ids)
+                                }
+
+                                // Các hàm thao tác CHỈ dùng map đã remember (ổn định) → không bị stale closure.
+                                fun recomputeLive() {
+                                    val anchor = draggingId ?: return
+                                    val baseW = baseWidth[anchor] ?: return
+                                    val aw = if (draggingResize) (baseW + dragAccumPx).coerceAtLeast(minClipWidthPx) else baseW
+                                    widStates[anchor]?.floatValue = aw
+                                    val otherIds = baseStart.keys.filter { it != anchor }
+                                    if (draggingResize) {
+                                        val aStart = baseStart[anchor] ?: 0f
+                                        posStates[anchor]?.floatValue = aStart
+                                        var run = aStart + aw
+                                        otherIds.sortedBy { baseStart[it]!! }.forEach { id ->
+                                            val bs = baseStart[id]!!; val bw = baseWidth[id] ?: 0f
+                                            if (bs >= aStart) { val s = maxOf(bs, run); posStates[id]?.floatValue = s; run = s + bw }
+                                            else posStates[id]?.floatValue = bs
+                                        }
+                                    } else {
+                                        val aFinger = ((baseStart[anchor] ?: 0f) + dragAccumPx).coerceAtLeast(0f)
+                                        val aCenter = aFinger + aw / 2f
+                                        val left = otherIds.filter { (baseStart[it]!! + (baseWidth[it] ?: 0f) / 2f) <= aCenter }.sortedBy { baseStart[it]!! }
+                                        val right = otherIds.filter { (baseStart[it]!! + (baseWidth[it] ?: 0f) / 2f) > aCenter }.sortedBy { baseStart[it]!! }
+                                        val leftEnd = left.maxOfOrNull { baseStart[it]!! + (baseWidth[it] ?: 0f) } ?: 0f
+                                        val aStart = maxOf(aFinger, leftEnd).coerceAtLeast(0f)
+                                        posStates[anchor]?.floatValue = aStart
+                                        left.forEach { posStates[it]?.floatValue = baseStart[it]!! }
+                                        var run = aStart + aw
+                                        right.forEach { id -> val bs = baseStart[id]!!; val bw = baseWidth[id] ?: 0f; val s = maxOf(bs, run); posStates[id]?.floatValue = s; run = s + bw }
+                                    }
+                                }
+                                fun snapPx(px: Float, excludeId: Long): Float {
+                                    var best = px; var bestDist = clipSnapPx
+                                    posStates.keys.filter { it != excludeId }.forEach { id ->
+                                        val s = posStates[id]?.floatValue ?: return@forEach
+                                        val e = s + (widStates[id]?.floatValue ?: 0f)
+                                        listOf(s, e).forEach { cand -> val d = kotlin.math.abs(cand - px); if (d < bestDist) { bestDist = d; best = cand } }
+                                    }
+                                    val secPx = (px / ppsPx).roundToInt() * ppsPx
+                                    if (kotlin.math.abs(secPx - px) < bestDist) best = secPx
+                                    return best
+                                }
+                                fun startDrag(id: Long, resize: Boolean) {
+                                    selectedClip = dev.id to id
+                                    draggingId = id; draggingResize = resize; dragAccumPx = 0f
+                                    posStates.keys.forEach { cid ->
+                                        baseStart[cid] = posStates[cid]?.floatValue ?: 0f
+                                        baseWidth[cid] = widStates[cid]?.floatValue ?: minClipWidthPx
+                                    }
+                                }
+                                fun dragBy(dx: Float) { dragAccumPx += dx; recomputeLive() }
+                                fun endDrag() {
+                                    val anchor = draggingId
+                                    if (anchor != null) {
+                                        if (draggingResize) {
+                                            val aStart = baseStart[anchor] ?: 0f
+                                            val curW = widStates[anchor]?.floatValue ?: 0f
+                                            if (curW / ppsPx >= 0.6f) {
+                                                val snappedEnd = snapPx(aStart + curW, anchor)
+                                                dragAccumPx = (snappedEnd - aStart) - (baseWidth[anchor] ?: 0f)
+                                                recomputeLive()
+                                            }
+                                        } else {
+                                            val snappedStart = snapPx(posStates[anchor]?.floatValue ?: 0f, anchor)
+                                            dragAccumPx = snappedStart - (baseStart[anchor] ?: 0f)
+                                            recomputeLive()
+                                        }
+                                    }
+                                    val layout = posStates.keys.mapNotNull { id ->
+                                        val s = posStates[id]?.floatValue ?: return@mapNotNull null
+                                        val w = widStates[id]?.floatValue ?: return@mapNotNull null
+                                        Triple(id, s / ppsPx, w / ppsPx)
+                                    }
+                                    draggingId = null
+                                    if (layout.isNotEmpty()) onApplyLayout(dev.id, layout)
+                                }
+
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -5080,19 +5179,19 @@ private fun TimelineEditorTab(
                                 ) {
                                     laneClips.forEach { clip ->
                                         key(clip.id) {
-                                            // Cạnh các clip khác trên lane → mốc snap khi kéo/giãn.
-                                            val snapEdges = laneClips
-                                                .filter { it.id != clip.id }
-                                                .flatMap { listOf(it.startSec, it.startSec + it.durationSec) }
+                                            val sp = posStates.getOrPut(clip.id) { mutableFloatStateOf(clip.startSec * ppsPx) }
+                                            val wp = widStates.getOrPut(clip.id) { mutableFloatStateOf((clip.durationSec * ppsPx).coerceAtLeast(minClipWidthPx)) }
                                             EditorClipBlock(
                                                 clip = clip,
-                                                pxPerSec = pxPerSec,
                                                 isLocked = isLocked,
                                                 isSelected = selectedClip == (dev.id to clip.id),
-                                                snapEdgesSec = snapEdges,
+                                                startPxState = sp,
+                                                widthPxState = wp,
+                                                minWidthPx = minClipWidthPx,
                                                 onSelect = { selectedClip = dev.id to clip.id },
-                                                onMove = { newStart -> onMoveClip(dev.id, clip.id, newStart) },
-                                                onResize = { newDur -> onResizeClip(dev.id, clip.id, newDur) }
+                                                onDragStart = { resize -> startDrag(clip.id, resize) },
+                                                onDragBy = { _, dx -> dragBy(dx) },
+                                                onDragEnd = { endDrag() }
                                             )
                                         }
                                     }
@@ -5235,49 +5334,23 @@ private fun EditorRuler(totalSeconds: Int, pxPerSec: Float, height: androidx.com
 @Composable
 private fun EditorClipBlock(
     clip: TimelineClip,
-    pxPerSec: Float,
     isLocked: Boolean,
     isSelected: Boolean,
-    snapEdgesSec: List<Float>,
+    startPxState: MutableFloatState,
+    widthPxState: MutableFloatState,
+    minWidthPx: Float,
     onSelect: () -> Unit,
-    onMove: (Float) -> Unit,
-    onResize: (Float) -> Unit
+    onDragStart: (resize: Boolean) -> Unit,
+    onDragBy: (resize: Boolean, dxPx: Float) -> Unit,
+    onDragEnd: (resize: Boolean) -> Unit
 ) {
-    val density = LocalDensity.current
-    val ppsPx = pxPerSec * density.density
-    val minWidthPx = with(density) { 5.dp.toPx() }
-    val snapThresholdPx = with(density) { 10.dp.toPx() }
-    val minClipSec = 0.2f
-    // Vị trí/độ rộng tính bằng PIXEL, đọc trong layout/placement phase để kéo MƯỢT
-    // (chỉ remeasure/replace node này, không recompose mỗi frame).
-    // State ỔN ĐỊNH theo clip.id để cùng object mà gesture ghi và offset/layout đọc.
-    val startPx = remember(clip.id) { mutableFloatStateOf(clip.startSec * ppsPx) }
-    val widthPx = remember(clip.id) { mutableFloatStateOf((clip.durationSec * ppsPx).coerceAtLeast(minWidthPx)) }
-    LaunchedEffect(clip.startSec, clip.durationSec, pxPerSec) {
-        startPx.floatValue = clip.startSec * ppsPx
-        widthPx.floatValue = (clip.durationSec * ppsPx).coerceAtLeast(minWidthPx)
-    }
-
-    // Hút (snap) một vị trí px về cạnh clip lân cận hoặc mốc giây tròn nếu đủ gần.
-    fun snapPx(valuePx: Float): Float {
-        var best = valuePx
-        var bestDist = snapThresholdPx
-        for (e in snapEdgesSec) {
-            val ex = e * ppsPx
-            val d = kotlin.math.abs(ex - valuePx)
-            if (d < bestDist) { bestDist = d; best = ex }
-        }
-        val roundedSecPx = (valuePx / ppsPx).roundToInt() * ppsPx
-        val d2 = kotlin.math.abs(roundedSecPx - valuePx)
-        if (d2 < bestDist) { best = roundedSecPx }
-        return best
-    }
-
     Box(
         modifier = Modifier
-            .offset { androidx.compose.ui.unit.IntOffset(startPx.floatValue.roundToInt(), 0) }
+            // Vị trí & độ rộng đọc Ở LAYOUT-PHASE (không recompose mỗi frame) → mượt.
+            // State do LANE sở hữu nên khi kéo, lane đẩy luôn các clip khác (ripple realtime).
+            .offset { androidx.compose.ui.unit.IntOffset(startPxState.floatValue.roundToInt(), 0) }
             .layout { measurable, constraints ->
-                val w = widthPx.floatValue.roundToInt().coerceAtLeast(minWidthPx.roundToInt())
+                val w = widthPxState.floatValue.roundToInt().coerceAtLeast(minWidthPx.roundToInt())
                 val placeable = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
                 layout(w, placeable.height) { placeable.place(0, 0) }
             }
@@ -5294,24 +5367,14 @@ private fun EditorClipBlock(
                 if (isSelected) Modifier.border(2.dp, Color.White, RoundedCornerShape(5.dp))
                 else Modifier
             )
-            // Chạm = chọn clip
-            .pointerInput(clip.id) {
-                detectTapGestures { onSelect() }
-            }
-            // Kéo thân = di chuyển. Kéo TỰ DO (mượt), chỉ snap khi THẢ TAY.
+            .pointerInput(clip.id) { detectTapGestures { onSelect() } }
             .then(
-                if (!isLocked) Modifier.pointerInput(clip.id, pxPerSec, snapEdgesSec) {
+                if (!isLocked) Modifier.pointerInput(clip.id) {
                     detectDragGestures(
-                        onDragStart = { onSelect() },
-                        onDrag = { change, amount ->
-                            change.consume()
-                            startPx.floatValue = (startPx.floatValue + amount.x).coerceAtLeast(0f)
-                        },
-                        onDragEnd = {
-                            val snapped = snapPx(startPx.floatValue).coerceAtLeast(0f)
-                            startPx.floatValue = snapped
-                            onMove(snapped / ppsPx)
-                        }
+                        onDragStart = { onDragStart(false) },
+                        onDrag = { change, amount -> change.consume(); onDragBy(false, amount.x) },
+                        onDragEnd = { onDragEnd(false) },
+                        onDragCancel = { onDragEnd(false) }
                     )
                 } else Modifier
             )
@@ -5338,25 +5401,12 @@ private fun EditorClipBlock(
                     .padding(vertical = 3.dp, horizontal = 2.dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(Color.White.copy(alpha = 0.9f))
-                    .pointerInput(clip.id, pxPerSec, snapEdgesSec) {
+                    .pointerInput(clip.id) {
                         detectDragGestures(
-                            onDragStart = { onSelect() },
-                            // Co giãn TỰ DO (mượt): chỉ cộng dồn delta, không snap mỗi frame.
-                            onDrag = { change, amount ->
-                                change.consume()
-                                widthPx.floatValue = (widthPx.floatValue + amount.x).coerceAtLeast(minWidthPx)
-                            },
-                            // Snap khi THẢ TAY; clip rất ngắn (<0.6s) thì GIỮ NGUYÊN để thu nhỏ hết cỡ.
-                            onDragEnd = {
-                                val rawDur = widthPx.floatValue / ppsPx
-                                val finalDur = (if (rawDur < 0.6f) {
-                                    rawDur
-                                } else {
-                                    (snapPx(startPx.floatValue + widthPx.floatValue) - startPx.floatValue) / ppsPx
-                                }).coerceAtLeast(minClipSec)
-                                widthPx.floatValue = (finalDur * ppsPx).coerceAtLeast(minWidthPx)
-                                onResize(finalDur)
-                            }
+                            onDragStart = { onDragStart(true) },
+                            onDrag = { change, amount -> change.consume(); onDragBy(true, amount.x) },
+                            onDragEnd = { onDragEnd(true) },
+                            onDragCancel = { onDragEnd(true) }
                         )
                     },
                 contentAlignment = Alignment.Center

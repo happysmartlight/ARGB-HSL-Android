@@ -3008,6 +3008,19 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         updateDeviceClips(deviceId, rippleResolve(resized, clipId))
     }
 
+    /** Áp layout (id → startSec, durSec) do UI tính sẵn (đã ripple realtime) rồi persist. */
+    fun setClipLayout(deviceId: Int, layout: List<Triple<Long, Float, Float>>) {
+        val list = _editorClips.value[deviceId] ?: return
+        val byId = layout.associateBy({ it.first }, { it.second to it.third })
+        val updated = list.map { c ->
+            byId[c.id]?.let { (s, d) ->
+                c.copy(startSec = s.coerceAtLeast(0f), durationSec = d.coerceAtLeast(EDITOR_MIN_CLIP_SEC))
+            } ?: c
+        }
+        // rippleResolve là lưới an toàn (layout đã không chồng nên thường idempotent).
+        updateDeviceClips(deviceId, rippleResolve(updated, -1L))
+    }
+
     /**
      * Giải chồng lấn kiểu "ripple" như TikTok: clip [anchorId] vừa được kéo/giãn được ƯU TIÊN
      * giữ vị trí; mọi clip bị đè sẽ bị ĐẨY SANG PHẢI nối tiếp (cascade). Kéo qua điểm bắt đầu
