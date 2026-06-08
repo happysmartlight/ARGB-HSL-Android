@@ -4800,9 +4800,8 @@ private fun TimelineEditorTab(
 
     // Clip đang chọn (deviceId, clipId) — bật nút xóa ngoài timeline + hiện handle co giãn.
     var selectedClip by remember { mutableStateOf<Pair<Int, Long>?>(null) }
-    // Khi đang kéo/giãn clip → KHOÁ cuộn-bằng-tay; dùng auto-scroll khi kéo tới mép.
+    // Khi đã chọn/đang kéo clip → KHOÁ cuộn ngang để cuộn không "cướp" gesture gây giật.
     var clipDragActive by remember { mutableStateOf(false) }
-    var boardViewportPx by remember { mutableFloatStateOf(0f) }
     val selectedClipObj = selectedClip?.let { (d, id) -> clipsByDevice[d]?.find { it.id == id } }
 
     Box(
@@ -5049,13 +5048,13 @@ private fun TimelineEditorTab(
                         }
                     }
 
-                    // Vùng cuộn ngang: thước + lanes. Chỉ KHOÁ cuộn-bằng-tay khi ĐANG kéo clip
-                    // (tránh cuộn cướp gesture gây giật); lúc đó dùng AUTO-SCROLL khi kéo tới mép.
+                    // Vùng cuộn ngang: thước + lanes. KHOÁ cuộn khi đã chọn 1 clip hoặc đang kéo
+                    // (để cuộn ngang không "cướp" gesture của clip gây giật). Bỏ chọn (chạm vùng
+                    // trống) để cuộn lại.
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .onGloballyPositioned { boardViewportPx = it.size.width.toFloat() }
-                            .horizontalScroll(boardScroll, enabled = !clipDragActive)
+                            .horizontalScroll(boardScroll, enabled = selectedClip == null && !clipDragActive)
                     ) {
                         Column(modifier = Modifier.width(contentWidth)) {
                             EditorRuler(totalSeconds = totalSeconds, pxPerSec = pxPerSec, height = rulerHeight)
@@ -5072,7 +5071,6 @@ private fun TimelineEditorTab(
                                 var draggingId by remember(dev.id) { mutableStateOf<Long?>(null) }
                                 var draggingResize by remember(dev.id) { mutableStateOf(false) }
                                 var dragAccumPx by remember(dev.id) { mutableFloatStateOf(0f) }
-                                var scrollStartPx by remember(dev.id) { mutableFloatStateOf(0f) }
                                 val baseStart = remember(dev.id) { mutableMapOf<Long, Float>() }
                                 val baseWidth = remember(dev.id) { mutableMapOf<Long, Float>() }
 
@@ -5108,9 +5106,7 @@ private fun TimelineEditorTab(
                                     } else {
                                         // Phân nhóm trái/phải theo VỊ TRÍ GỐC (cố định lúc bắt đầu kéo) — KHÔNG
                                         // phân theo tâm mỗi frame, nên clip không "lật" qua lại gây giật/nhảy.
-                                        // Cộng độ cuộn phát sinh để clip "đi theo" khi auto-scroll tới mép.
-                                        val scrollDelta = boardScroll.value - scrollStartPx
-                                        val aFinger = ((baseStart[anchor] ?: 0f) + dragAccumPx + scrollDelta).coerceAtLeast(0f)
+                                        val aFinger = ((baseStart[anchor] ?: 0f) + dragAccumPx).coerceAtLeast(0f)
                                         val anchorBase = baseStart[anchor] ?: 0f
                                         val leftIds = otherIds.filter { (baseStart[it] ?: 0f) < anchorBase }
                                         val rightIds = otherIds.filter { (baseStart[it] ?: 0f) >= anchorBase }
@@ -5141,34 +5137,12 @@ private fun TimelineEditorTab(
                                     clipDragActive = true
                                     selectedClip = dev.id to id
                                     draggingId = id; draggingResize = resize; dragAccumPx = 0f
-                                    scrollStartPx = boardScroll.value.toFloat()
                                     posStates.keys.forEach { cid ->
                                         baseStart[cid] = posStates[cid]?.floatValue ?: 0f
                                         baseWidth[cid] = widStates[cid]?.floatValue ?: minClipWidthPx
                                     }
                                 }
-                                fun dragBy(dx: Float) {
-                                    dragAccumPx += dx
-                                    recomputeLive()
-                                    // Auto-scroll khi mép clip chạm rìa khung nhìn (chỉ khi DI CHUYỂN).
-                                    val anchor = draggingId
-                                    if (anchor != null && !draggingResize && boardViewportPx > 1f) {
-                                        val edge = with(density) { 56.dp.toPx() }
-                                        val step = with(density) { 26.dp.toPx() }
-                                        val scroll = boardScroll.value.toFloat()
-                                        val aStart = posStates[anchor]?.floatValue ?: 0f
-                                        val aw = widStates[anchor]?.floatValue ?: 0f
-                                        val screenStart = aStart - scroll
-                                        val screenEnd = aStart + aw - scroll
-                                        if (screenEnd > boardViewportPx - edge && boardScroll.value < boardScroll.maxValue) {
-                                            boardScroll.dispatchRawDelta(step)
-                                            recomputeLive()
-                                        } else if (screenStart < edge && boardScroll.value > 0) {
-                                            boardScroll.dispatchRawDelta(-step)
-                                            recomputeLive()
-                                        }
-                                    }
-                                }
+                                fun dragBy(dx: Float) { dragAccumPx += dx; recomputeLive() }
                                 fun endDrag() {
                                     val anchor = draggingId
                                     if (anchor != null) {
