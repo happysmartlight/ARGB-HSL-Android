@@ -13,6 +13,7 @@ import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
+import com.example.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,7 +43,12 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
         private const val PREFS = "argb_hsl_subscription"
         private const val KEY_IS_PRO = "is_pro"
         private const val KEY_LAST_TOKEN = "last_purchase_token"
+        // DEBUG: cờ "dính" để Pro debug không bị Billing reset mỗi lần mở app.
+        private const val KEY_DEBUG_PRO = "debug_pro_sticky"
     }
+
+    private val debugProSticky: Boolean
+        get() = BuildConfig.DEBUG && prefs.getBoolean(KEY_DEBUG_PRO, false)
 
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -53,7 +59,7 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
     private val _state = MutableStateFlow(
         ProSubscriptionState(
             isLoading = true,
-            isPro = prefs.getBoolean(KEY_IS_PRO, false),
+            isPro = prefs.getBoolean(KEY_IS_PRO, false) || debugProSticky,
             statusMessage = "Đang kiểm tra gói Pro..."
         )
     )
@@ -114,6 +120,7 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
     fun setDebugEntitlement(enabled: Boolean) {
         prefs.edit()
             .putBoolean(KEY_IS_PRO, enabled)
+            .putBoolean(KEY_DEBUG_PRO, enabled) // "dính": Billing sẽ không reset Pro debug
             .apply()
         _state.update {
             it.copy(
@@ -357,6 +364,17 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
                         isLoading = false,
                         isPro = prefs.getBoolean(KEY_IS_PRO, false),
                         statusMessage = "Thanh toán đang chờ xử lý. Pro sẽ mở khi Google Play xác nhận.",
+                        errorMessage = null
+                    )
+                }
+            }
+            debugProSticky -> {
+                // DEBUG: giữ Pro debug, không để Billing reset.
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        isPro = true,
+                        statusMessage = "Pro debug (dính) đang bật.",
                         errorMessage = null
                     )
                 }
