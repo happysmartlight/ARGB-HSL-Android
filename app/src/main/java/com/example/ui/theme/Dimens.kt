@@ -28,6 +28,8 @@ data class AppDimens(
     val iconSize: Dp,
     val buttonHeight: Dp,
     val colorWheelSize: Dp,
+    /** Bề rộng cột danh sách thiết bị ở layout master-detail (màn ≥ 720dp). */
+    val deviceListPaneWidth: Dp,
     val isCompact: Boolean
 )
 
@@ -44,6 +46,7 @@ val LocalAppDimens = staticCompositionLocalOf {
         iconSize = 18.dp,
         buttonHeight = 50.dp,
         colorWheelSize = 260.dp,
+        deviceListPaneWidth = 340.dp,
         isCompact = false
     )
 }
@@ -98,6 +101,9 @@ fun rememberAppDimens(): AppDimens {
         },
         // Interactive color wheel: a share of the screen width, clamped to sane bounds.
         colorWheelSize = (widthDp * 0.66f).dp.coerceIn(180.dp, 300.dp),
+        // Cột danh sách thiết bị (master-detail): theo tỷ lệ màn hình, kẹp biên hợp lý
+        // để tablet rất rộng không bị cột quá to, màn 720dp không bị cột quá hẹp.
+        deviceListPaneWidth = (widthDp * 0.28f).dp.coerceIn(300.dp, 420.dp),
         isCompact = sizeClass == WindowSizeClass.Compact
     )
 }

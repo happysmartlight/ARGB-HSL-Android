@@ -9,7 +9,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.i18n.LocalAppStrings
+import com.example.ui.i18n.stringsFor
 
 import com.example.ui.WledManagerApp
 import com.example.viewmodel.WledViewModel
@@ -52,7 +57,12 @@ class MainActivity : ComponentActivity() {
     window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     setContent {
       MyApplicationTheme {
-        WledManagerApp(viewModel = viewModel)
+        // Bộ chuỗi đa ngôn ngữ cấp cho toàn bộ cây UI; đổi ngôn ngữ trong Cài đặt
+        // là mọi màn dùng LocalAppStrings cập nhật ngay.
+        val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
+        CompositionLocalProvider(LocalAppStrings provides stringsFor(appLanguage)) {
+          WledManagerApp(viewModel = viewModel)
+        }
       }
     }
   }

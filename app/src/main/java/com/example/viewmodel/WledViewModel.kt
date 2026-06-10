@@ -78,6 +78,21 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         _addDeviceState.value = AddDeviceState.Idle
     }
 
+    // ---- Cài đặt hệ thống app (ngôn ngữ...) ----
+    private val appSettingsPrefs by lazy {
+        getApplication<Application>()
+            .getSharedPreferences("wled_app_settings", android.content.Context.MODE_PRIVATE)
+    }
+
+    /** Mã ngôn ngữ app: "vi" (mặc định) hoặc "en". Tạm thời demo — mới áp dụng cho màn Cài đặt. */
+    private val _appLanguage = MutableStateFlow("vi")
+    val appLanguage: StateFlow<String> = _appLanguage.asStateFlow()
+
+    fun setAppLanguage(code: String) {
+        _appLanguage.value = code
+        appSettingsPrefs.edit().putString("language", code).apply()
+    }
+
     // ---- Nút bấm Bluetooth (HID) điều khiển Play từ xa ----
     private val btRemotePrefs by lazy {
         getApplication<Application>()
@@ -96,6 +111,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     val btRemoteLearning: StateFlow<Boolean> = _btRemoteLearning.asStateFlow()
 
     init {
+        _appLanguage.value = appSettingsPrefs.getString("language", "vi") ?: "vi"
         _btRemoteEnabled.value = btRemotePrefs.getBoolean("enabled", false)
         _btRemoteKeyCode.value = btRemotePrefs.getInt("keycode", -1)
     }
