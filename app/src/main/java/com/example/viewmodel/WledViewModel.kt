@@ -2599,7 +2599,11 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private data class PreparedImage(
         val filename: String,
         val presetName: String,
-        val bytes: ByteArray
+        val bytes: ByteArray,
+        /** Số LED pixel theo chiều ngang (POI = số pixel; Matrix = W). Dùng cho seg start/stop. */
+        val segWidth: Int,
+        /** Số LED pixel theo chiều dọc (Matrix = H). 0 = segment 1 chiều (POI), không gửi startY/stopY. */
+        val segHeight: Int = 0
     )
 
     /** Bắt đầu upload danh sách ảnh đã chọn tới các mạch online được chọn. */
@@ -2711,15 +2715,18 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 if (mode == ImageUploadMode.POI) {
                     val src = android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size)
                     if (src == null) { warnings += "$display: không phải ảnh hợp lệ."; continue }
-                    val bmp = PoiImage.encodeBmp24(PoiImage.rotateResizeWidth(src, poiPixels))
+                    val processed = PoiImage.rotateResizeWidth(src, poiPixels)
+                    val bmp = PoiImage.encodeBmp24(processed)
                     if (!PoiImage.bmpFitsLimit(bmp)) {
                         warnings += "$display: ảnh quá lớn (${bmp.size / 1024}KB ≥ 63KB), hãy giảm số pixel."
                         continue
                     }
-                    out += PreparedImage("$safe.bmp", safe, bmp)
+                    // seg stop = chiều rộng BMP = số LED pixel POI (docs §6.3).
+                    out += PreparedImage("$safe.bmp", safe, bmp, segWidth = processed.width)
                 } else {
                     val gif = MatrixImage.buildGif(raw, clampW, clampH)
-                    out += PreparedImage("$safe.gif", safe, gif)
+                    // seg stop = W, stopY = H của ma trận đã resize (docs §11.4).
+                    out += PreparedImage("$safe.gif", safe, gif, segWidth = clampW, segHeight = clampH)
                 }
             } catch (e: Exception) {
                 android.util.Log.e("WledViewModel", "prepareImages failed for $display", e)
@@ -2842,7 +2849,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         var lastErr: Exception? = null
         for (attempt in 0 until 3) {
             try {
-                saveImagePreset(ip, img.filename, slot, img.presetName, fx)
+                saveImagePreset(ip, img.filename, slot, img.presetName, fx, segWidth = img.segWidth, segHeight = img.segHeight)
                 return
             } catch (e: Exception) {
                 lastErr = e
@@ -2873,13 +2880,19 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         slot: Int,
         presetName: String,
         fx: Int,
+        segWidth: Int,
+        segHeight: Int = 0,
         bri: Int = 128,
         segBri: Int = 255
     ) = withContext(Dispatchers.IO) {
         if (MockDevice.isMock(ip)) { delay(60); return@withContext }
         val path = if (filename.startsWith("/")) filename else "/$filename"
+        // start/stop tường minh để ảnh map đúng dải LED, không phụ thuộc bounds sống trên thiết bị.
         val seg = org.json.JSONObject()
-            .put("id", 0).put("on", true).put("bri", segBri)
+            .put("id", 0).put("start", 0).put("stop", segWidth)
+        // Matrix (GIF) là segment 2 chiều → thêm startY/stopY (docs §11.4).
+        if (segHeight > 0) seg.put("startY", 0).put("stopY", segHeight)
+        seg.put("on", true).put("bri", segBri)
             .put("n", path).put("fx", fx).put("ix", 0).put("ml2", 0)
         val payload = org.json.JSONObject()
             .put("on", true).put("bri", bri)

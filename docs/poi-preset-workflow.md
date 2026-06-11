@@ -215,6 +215,8 @@ Content-Type: application/json
   "seg": [
     {
       "id": 0,
+      "start": 0,
+      "stop": 72,
       "on": true,
       "bri": 255,
       "n": "/LOGO_ABC.bmp",
@@ -237,6 +239,7 @@ Giải thích từng trường (rất quan trọng — đừng bỏ):
 | `on` (top) | Bật thiết bị (global). |
 | `bri` (top) | Độ sáng global (mặc định 128, lấy từ setting `pixel_brightness`). |
 | `seg[0].id` | Segment 0. |
+| `seg[0].start` / `seg[0].stop` | **Dải LED segment chiếm**: `start=0`, `stop=<số pixel LED POI>` (= chiều rộng ảnh BMP, `seg_stop=bmp.width`). Đặt tường minh để ảnh map đúng dải LED, không phụ thuộc bounds sống trên thiết bị. |
 | `seg[0].on` | Segment bật. |
 | `seg[0].bri` | Độ sáng segment (255). |
 | `seg[0].n` | **Đường dẫn file ảnh** — phải có dấu `/` ở đầu: `"/<file>.bmp"`. |
@@ -462,7 +465,8 @@ Giống §6.3 nhưng **`fx = 53`** và file `.gif`. Code: `_t4_save_preset_with_
   "on": true,
   "bri": 200,
   "seg": [
-    { "id": 0, "on": true, "bri": 255, "n": "/LOGO_ABC.gif", "fx": 53, "ix": 0, "ml2": 0 }
+    { "id": 0, "start": 0, "stop": 32, "startY": 0, "stopY": 16,
+      "on": true, "bri": 255, "n": "/LOGO_ABC.gif", "fx": 53, "ix": 0, "ml2": 0 }
   ],
   "psave": 5,
   "n": "LOGO_ABC",
@@ -473,6 +477,9 @@ Giống §6.3 nhưng **`fx = 53`** và file `.gif`. Code: `_t4_save_preset_with_
 
 - `bri` (global) = `slider_t4_bri` (phần trăm) → `bri = pct * 255 // 100`.
 - `seg[0].n` = `"/<file>.gif"`.
+- `seg[0].start/stop` + `startY/stopY` = vùng ma trận **W×H** (đọc từ kích thước
+  GIF đã resize: `seg_stop=W`, `seg_stop_y=H`). Đặt tường minh để GIF map đúng
+  lưới LED, không phụ thuộc bounds sống trên thiết bị.
 - Các trường còn lại (`ix:0`, `ml2:0`, `ib`, `sb`) ý nghĩa như §6.3.
 
 ### 11.5 Endpoint Matrix (khác POI ở đâu)
