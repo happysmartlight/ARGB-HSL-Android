@@ -6,11 +6,13 @@ Ngay trong app đã thêm Play Billing cho gói Pro hằng năm. Các mục dư�
 
 - Vào Play Console > Monetize with Play > Products > Subscriptions.
 - Tạo subscription ID: `argb_hsl_pro`.
-- Tạo base plan ID: `annual-auto`.
-- Loại base plan: auto-renewing.
-- Chu kỳ: yearly.
-- Giá chính: `79.00 USD/year`, sau đó kiểm tra giá quy đổi theo từng quốc gia.
-- Activate subscription và base plan trước khi test purchase trong app.
+- App hỗ trợ 3 base plan trong cùng subscription này (xem `ProSubscriptionManager.ORDERED_BASE_PLAN_IDS`):
+  - `annual-auto` — auto-renewing, chu kỳ yearly, giá chính `79.00 USD/year` (gói "Tiết kiệm nhất", chọn mặc định).
+  - `3-days-pro` — gói ngắn hạn (prepaid 3 ngày).
+  - `1-day-pro` — gói ngắn hạn (prepaid 1 ngày).
+- App tự đọc giá/kỳ hạn/loại (tự gia hạn hay trả trước) từ ProductDetails lúc chạy; chỉ cần đảm bảo base plan ID khớp đúng các chuỗi trên.
+- Giá: kiểm tra giá quy đổi theo từng quốc gia cho cả 3 base plan.
+- Activate subscription và **cả 3 base plan** trước khi test purchase trong app (base plan nào chưa activate sẽ không hiện trong danh sách chọn gói).
 - Thêm license testers ở Play Console > Setup > License testing để test bằng thẻ test của Google Play.
 
 Nguồn Google: subscription gồm `subscription`, `base plan`, `offer`, và base plan có thể là annual auto-renewing. Base plan ID không đổi được sau khi activate.

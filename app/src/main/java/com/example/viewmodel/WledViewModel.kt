@@ -65,6 +65,10 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         proSubscriptionManager.launchPurchase(activity)
     }
 
+    fun selectProPlan(basePlanId: String) {
+        proSubscriptionManager.selectPlan(basePlanId)
+    }
+
     fun setDebugProEntitlement(enabled: Boolean) {
         if (BuildConfig.DEBUG) {
             proSubscriptionManager.setDebugEntitlement(enabled)

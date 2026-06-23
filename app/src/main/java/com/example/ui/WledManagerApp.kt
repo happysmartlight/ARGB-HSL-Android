@@ -464,6 +464,7 @@ fun WledManagerApp(viewModel: WledViewModel) {
                         .show()
                 }
             },
+            onSelectPlan = { viewModel.selectProPlan(it) },
             onRestore = { viewModel.restoreProSubscription() },
             onRefresh = { viewModel.refreshProSubscription() },
             onManageSubscription = { openPlaySubscriptionCenter(context) },

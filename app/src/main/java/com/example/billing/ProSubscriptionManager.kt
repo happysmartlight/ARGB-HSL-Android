@@ -19,6 +19,21 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
+/**
+ * Một gói (base plan) mua được của subscription [ProSubscriptionManager.PRO_PRODUCT_ID].
+ * Mọi thông tin đều rút ra từ ProductDetails lúc chạy nên không phải hardcode giá/kỳ hạn.
+ */
+data class ProPlanOption(
+    val basePlanId: String,
+    /** Giá đã định dạng theo nội tệ, ví dụ "$79.00". */
+    val priceText: String,
+    /** Kỳ hạn ISO-8601 của pha tính tiền cuối (P1Y, P3D, P1D…). Rỗng nếu không đọc được. */
+    val billingPeriod: String,
+    /** true = gói tự gia hạn; false = gói trả trước (prepaid) dùng hết hạn là thôi. */
+    val isAutoRenew: Boolean,
+    val offerToken: String
+)
+
 data class ProSubscriptionState(
     val isLoading: Boolean = true,
     val isBillingReady: Boolean = false,
@@ -26,11 +41,18 @@ data class ProSubscriptionState(
     val productId: String = ProSubscriptionManager.PRO_PRODUCT_ID,
     val basePlanId: String = ProSubscriptionManager.PRO_ANNUAL_BASE_PLAN_ID,
     val priceText: String = ProSubscriptionManager.DEFAULT_PRICE_TEXT,
+    /** Danh sách các gói mua được (đã lọc theo base plan đã kích hoạt trên Play Console). */
+    val plans: List<ProPlanOption> = emptyList(),
+    /** Base plan người dùng đang chọn để mua. */
+    val selectedBasePlanId: String = ProSubscriptionManager.PRO_ANNUAL_BASE_PLAN_ID,
     val statusMessage: String? = null,
     val errorMessage: String? = null
 ) {
     val canBuy: Boolean
         get() = isBillingReady && !isPro
+
+    val selectedPlan: ProPlanOption?
+        get() = plans.firstOrNull { it.basePlanId == selectedBasePlanId } ?: plans.firstOrNull()
 }
 
 class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
@@ -38,7 +60,19 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
     companion object {
         const val PRO_PRODUCT_ID = "argb_hsl_pro"
         const val PRO_ANNUAL_BASE_PLAN_ID = "annual-auto"
+        const val PRO_3DAYS_BASE_PLAN_ID = "3-days-pro"
+        const val PRO_1DAY_BASE_PLAN_ID = "1-day-pro"
         const val DEFAULT_PRICE_TEXT = "$79.00/year"
+
+        /**
+         * Thứ tự hiển thị các gói: hằng năm (tiết kiệm nhất) trước, rồi tới ngắn hạn.
+         * Chỉ những base plan có trong danh sách này mới được hiện ra.
+         */
+        val ORDERED_BASE_PLAN_IDS = listOf(
+            PRO_ANNUAL_BASE_PLAN_ID,
+            PRO_3DAYS_BASE_PLAN_ID,
+            PRO_1DAY_BASE_PLAN_ID
+        )
 
         private const val PREFS = "argb_hsl_subscription"
         private const val KEY_IS_PRO = "is_pro"
@@ -99,6 +133,18 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
         connect {
             queryProductDetails()
             refreshPurchases(showRestoreMessage = true)
+        }
+    }
+
+    /** Đổi gói đang chọn (không mở thanh toán). UI cập nhật giá theo gói mới. */
+    fun selectPlan(basePlanId: String) {
+        _state.update { current ->
+            val plan = current.plans.firstOrNull { it.basePlanId == basePlanId } ?: return@update current
+            current.copy(
+                selectedBasePlanId = basePlanId,
+                priceText = plan.priceText,
+                errorMessage = null
+            )
         }
     }
 
@@ -249,11 +295,22 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
                 return@queryProductDetailsAsync
             }
 
+            val plans = details.buildPlanOptions()
             _state.update {
+                // Giữ lựa chọn cũ nếu vẫn còn; nếu không, chọn gói đầu danh sách (hằng năm).
+                val selected = when {
+                    plans.any { p -> p.basePlanId == it.selectedBasePlanId } -> it.selectedBasePlanId
+                    else -> plans.firstOrNull()?.basePlanId ?: it.selectedBasePlanId
+                }
+                val selectedPlan = plans.firstOrNull { p -> p.basePlanId == selected }
                 it.copy(
                     isLoading = false,
-                    priceText = details.annualPriceText(),
-                    errorMessage = null,
+                    plans = plans,
+                    selectedBasePlanId = selected,
+                    priceText = selectedPlan?.priceText ?: details.annualPriceText(),
+                    errorMessage = if (plans.isEmpty()) {
+                        "Chưa có gói nào được kích hoạt trong Play Console."
+                    } else null,
                     statusMessage = if (it.isPro) "Pro đang hoạt động." else null
                 )
             }
@@ -292,12 +349,15 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
             return
         }
 
-        val offerToken = details.annualOfferToken()
+        val selectedBasePlanId = _state.value.selectedBasePlanId
+        val offerToken = _state.value.plans
+            .firstOrNull { it.basePlanId == selectedBasePlanId }
+            ?.offerToken
         if (offerToken.isNullOrBlank()) {
             _state.update {
                 it.copy(
                     isLoading = false,
-                    errorMessage = "Base plan $PRO_ANNUAL_BASE_PLAN_ID chưa được kích hoạt trong Play Console."
+                    errorMessage = "Base plan $selectedBasePlanId chưa được kích hoạt trong Play Console."
                 )
             }
             return
@@ -416,23 +476,34 @@ class ProSubscriptionManager(context: Context) : PurchasesUpdatedListener {
         }
     }
 
-    private fun ProductDetails.annualOffer(): ProductDetails.SubscriptionOfferDetails? {
-        val offers = subscriptionOfferDetails.orEmpty()
-        val forBasePlan = offers.filter { it.basePlanId == PRO_ANNUAL_BASE_PLAN_ID }
+    /** Chọn offer ưu tiên cho một base plan: ưu tiên offer khuyến mãi (offerId != null). */
+    private fun ProductDetails.offerFor(basePlanId: String): ProductDetails.SubscriptionOfferDetails? {
+        val forBasePlan = subscriptionOfferDetails.orEmpty().filter { it.basePlanId == basePlanId }
         // Google Play CHỈ trả về offer mà người dùng ĐỦ ĐIỀU KIỆN. Vì vậy nếu có
         // offer khuyến mãi (free trial / intro, offerId != null) thì ưu tiên dùng
         // nó để màn thanh toán hiện "dùng thử miễn phí"; người đã hết điều kiện sẽ
         // chỉ còn base plan giá thường.
-        return forBasePlan.firstOrNull { it.offerId != null }
-            ?: forBasePlan.firstOrNull()
-            ?: offers.firstOrNull()
+        return forBasePlan.firstOrNull { it.offerId != null } ?: forBasePlan.firstOrNull()
     }
 
-    private fun ProductDetails.annualOfferToken(): String? =
-        annualOffer()?.offerToken
+    /** Dựng danh sách gói mua được từ ProductDetails theo thứ tự ORDERED_BASE_PLAN_IDS. */
+    private fun ProductDetails.buildPlanOptions(): List<ProPlanOption> =
+        ORDERED_BASE_PLAN_IDS.mapNotNull { basePlanId ->
+            val offer = offerFor(basePlanId) ?: return@mapNotNull null
+            // Pha tính tiền cuối = giá định kỳ thật (bỏ qua pha free-trial/intro).
+            val lastPhase = offer.pricingPhases.pricingPhaseList.lastOrNull()
+            ProPlanOption(
+                basePlanId = basePlanId,
+                priceText = lastPhase?.formattedPrice.orEmpty().ifBlank { DEFAULT_PRICE_TEXT },
+                billingPeriod = lastPhase?.billingPeriod.orEmpty(),
+                isAutoRenew = lastPhase?.recurrenceMode ==
+                    ProductDetails.RecurrenceMode.INFINITE_RECURRING,
+                offerToken = offer.offerToken
+            )
+        }
 
     private fun ProductDetails.annualPriceText(): String {
-        val price = annualOffer()
+        val price = offerFor(PRO_ANNUAL_BASE_PLAN_ID)
             ?.pricingPhases
             ?.pricingPhaseList
             ?.lastOrNull()

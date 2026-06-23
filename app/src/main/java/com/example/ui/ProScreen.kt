@@ -8,6 +8,7 @@ import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -44,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
 import com.example.billing.ProSubscriptionManager
 import com.example.billing.ProSubscriptionState
+import com.example.ui.i18n.AppStrings
 import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.CyberGreen
@@ -62,6 +64,7 @@ import com.example.ui.theme.NeonMagenta
 fun ProScreen(
     state: ProSubscriptionState,
     onPurchase: () -> Unit,
+    onSelectPlan: (String) -> Unit,
     onRestore: () -> Unit,
     onRefresh: () -> Unit,
     onManageSubscription: () -> Unit,
@@ -92,11 +95,57 @@ fun ProScreen(
             ) {
                 ProHeroCard(isPro = state.isPro, tagline = strings.proHeroTagline, activeBadge = strings.proBadgeActive)
 
-                ProPriceCard(
-                    planLabel = strings.proYearlyPlan,
-                    priceText = state.priceText,
-                    renewNote = strings.proAutoRenewNote
-                )
+                if (!state.isPro) {
+                    if (state.plans.size > 1) {
+                        // Nhiều base plan → cho người dùng chọn gói trước khi mua.
+                        Text(
+                            text = strings.proChoosePlan,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Black,
+                            color = CyberCyan,
+                            letterSpacing = 2.sp,
+                            modifier = Modifier.padding(start = 4.dp)
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            state.plans.forEach { plan ->
+                                ProPlanRow(
+                                    label = planLabel(plan.basePlanId, strings),
+                                    priceText = plan.priceText,
+                                    isAutoRenew = plan.isAutoRenew,
+                                    isBestValue = plan.basePlanId ==
+                                        ProSubscriptionManager.PRO_ANNUAL_BASE_PLAN_ID,
+                                    bestValueLabel = strings.proBestValue,
+                                    selected = plan.basePlanId == state.selectedBasePlanId,
+                                    onClick = { onSelectPlan(plan.basePlanId) }
+                                )
+                            }
+                        }
+                        val selectedPlan = state.selectedPlan
+                        Text(
+                            text = if (selectedPlan?.isAutoRenew == false) {
+                                strings.proPrepaidNote
+                            } else {
+                                strings.proAutoRenewNote
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                    } else {
+                        // Chỉ 1 gói (hoặc chưa tải xong) → giữ thẻ giá đơn như trước.
+                        val onlyPlan = state.selectedPlan
+                        ProPriceCard(
+                            planLabel = onlyPlan?.let { planLabel(it.basePlanId, strings) }
+                                ?: strings.proYearlyPlan,
+                            priceText = state.priceText,
+                            renewNote = if (onlyPlan?.isAutoRenew == false) {
+                                strings.proPrepaidNote
+                            } else {
+                                strings.proAutoRenewNote
+                            }
+                        )
+                    }
+                }
 
                 // ---- Quyền lợi Pro ----
                 Text(
@@ -291,6 +340,76 @@ private fun ProHeroCard(isPro: Boolean, tagline: String, activeBadge: String) {
                 textAlign = TextAlign.Center
             )
         }
+    }
+}
+
+/** Nhãn hiển thị cho từng base plan. */
+private fun planLabel(basePlanId: String, strings: AppStrings): String = when (basePlanId) {
+    ProSubscriptionManager.PRO_ANNUAL_BASE_PLAN_ID -> strings.proYearlyPlan
+    ProSubscriptionManager.PRO_3DAYS_BASE_PLAN_ID -> strings.proPlan3Days
+    ProSubscriptionManager.PRO_1DAY_BASE_PLAN_ID -> strings.proPlan1Day
+    else -> basePlanId
+}
+
+/** Một dòng chọn gói: radio + nhãn + (badge "Tiết kiệm nhất") + giá; viền sáng khi chọn. */
+@Composable
+private fun ProPlanRow(
+    label: String,
+    priceText: String,
+    isAutoRenew: Boolean,
+    isBestValue: Boolean,
+    bestValueLabel: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(16.dp)
+    val borderColor = if (selected) CyberCyan else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(
+                if (selected) CyberCyan.copy(alpha = 0.08f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)
+            )
+            .border(if (selected) 1.5.dp else 1.dp, borderColor, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (isBestValue) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = CyberYellow.copy(alpha = 0.16f),
+                        contentColor = CyberYellow,
+                        border = BorderStroke(1.dp, CyberYellow.copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = bestValueLabel,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+            }
+        }
+        Text(
+            text = priceText,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Black,
+            color = if (selected) CyberCyan else MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 

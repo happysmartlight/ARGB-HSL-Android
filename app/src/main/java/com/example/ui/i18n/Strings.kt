@@ -276,6 +276,12 @@ interface AppStrings {
     val proSubtitle: String
     val proYearlyPlan: String
     val proAutoRenewNote: String
+    // ---- Trang Pro: chọn gói (nhiều base plan) ----
+    val proChoosePlan: String
+    val proBestValue: String
+    val proPlan1Day: String
+    val proPlan3Days: String
+    val proPrepaidNote: String
     val proBenefit1: String
     val proBenefit2: String
     val proBenefit3: String
@@ -544,6 +550,11 @@ val ViStrings: AppStrings = object : AppStrings {
     override val proSubtitle = "Gói theo năm cho điều khiển đồng loạt và biên đạo nhiều mạch."
     override val proYearlyPlan = "Pro hằng năm"
     override val proAutoRenewNote = "Gói Pro tự động gia hạn hằng năm qua Google Play. Bạn có thể hủy bất cứ lúc nào trong Play Store và tiếp tục dùng Pro đến hết kỳ đã thanh toán."
+    override val proChoosePlan = "CHỌN GÓI"
+    override val proBestValue = "Tiết kiệm nhất"
+    override val proPlan1Day = "1 ngày"
+    override val proPlan3Days = "3 ngày"
+    override val proPrepaidNote = "Gói trả trước: dùng trong thời hạn rồi tự hết, KHÔNG tự gia hạn. Có thể mua lại bất cứ lúc nào."
     override val proBenefit1 = "Điều khiển bật/tắt, màu, hiệu ứng và độ sáng cho tất cả mạch cùng lúc."
     override val proBenefit2 = "Import timecode, bake preset, playlist 249 và timeline đồng bộ theo nhạc."
     override val proBenefit3 = "Dọn preset hàng loạt để chuẩn bị show mới nhanh hơn."
@@ -817,6 +828,11 @@ val EnStrings: AppStrings = object : AppStrings {
     override val proSubtitle = "Yearly plan for group control and multi-device choreography."
     override val proYearlyPlan = "Yearly Pro"
     override val proAutoRenewNote = "Pro renews yearly via Google Play. You can cancel anytime in the Play Store and keep Pro until the end of the paid period."
+    override val proChoosePlan = "CHOOSE A PLAN"
+    override val proBestValue = "Best value"
+    override val proPlan1Day = "1 day"
+    override val proPlan3Days = "3 days"
+    override val proPrepaidNote = "Prepaid pass: valid for the period then expires, it does NOT auto-renew. You can buy again anytime."
     override val proBenefit1 = "Control power, color, effects and brightness for all devices at once."
     override val proBenefit2 = "Import timecode, bake presets, playlist 249 and music-synced timeline."
     override val proBenefit3 = "Bulk-clean presets to prepare new shows faster."
