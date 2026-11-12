@@ -234,7 +234,9 @@ Decoding this envelope must yield the plaintext above:
   },
 
   "audio_path": "/path/to/music.mp3",
+  "audio_rel": "music.mp3",
   "audio_trim": { "start": 0.0, "end": 180.5 },
+  "recipe_files": {},
 
   "mock_devices": [
     { "id": "mock:1", "name": "Stage Left" },
@@ -311,6 +313,7 @@ Decoding this envelope must yield the plaintext above:
       "ip": "192.168.1.10",
       "name": "Center Stage",
       "is_mock": false,
+      "mac": "aabbccddee01",
       "clips": [
         {
           "preset_id": 3,
@@ -318,7 +321,12 @@ Decoding this envelope must yield the plaintext above:
           "start": 1.0,
           "duration": 3.0,
           "transition": 0.0,
-          "clip_type": "preset"
+          "clip_type": "preset",
+          "recipe": {
+            "kind": "preset",
+            "payload": { "n": "Chase", "on": true, "seg": [{ "id": 0, "fx": 28 }] },
+            "files": []
+          }
         }
       ]
     }
@@ -347,7 +355,9 @@ Decoding this envelope must yield the plaintext above:
 | `preset_palette` | object | Cache of preset names loaded from a source device. Used for UI only. |
 | `palette_library` | object | Cache of color palette names and preview data. Used for UI only. |
 | `audio_path` | string \| null | Absolute local path to the audio file. May not exist on the Android device. |
+| `audio_rel` | string \| null | *(optional, 2026-11)* Audio path relative to the folder of the timeline file, `/` separators. See §3.1. |
 | `audio_trim` | object \| null | `{start, end}` in seconds for audio trim range. |
+| `recipe_files` | object | *(optional, 2026-11)* `sha256 hex → base64 file content`, shared by every `clips[].recipe`. See §3.1. |
 | `mock_devices` | array | List of virtual devices defined in the session. |
 | `tracks` | array | One entry per device (mock or real), containing the clip list. |
 | `timing_marks` | array[float] | Beat/timing mark positions in seconds. UI-only. |
@@ -367,6 +377,7 @@ Decoding this envelope must yield the plaintext above:
 | `ip` | string | Device IP (`"192.168.1.10"`) OR mock ID (`"mock:1"`). |
 | `name` | string | Display name of this device/track. |
 | `is_mock` | bool | `true` if this track belongs to a mock device. |
+| `mac` | string | *(optional, 2026-11, real devices only)* MAC of the device, 12 lowercase hex chars without separators. See §3.1. |
 | `clips` | array | List of clips on this track. |
 
 ### `tracks[i].clips[j]`
@@ -381,11 +392,13 @@ Decoding this envelope must yield the plaintext above:
 | `clip_type` | string | optional | `"preset"`, `"effect"`, or `"palette"`. Defaults to `"preset"` if absent. |
 | `fx_id` | int | optional | WLED effect ID. Present when `clip_type` is `"effect"` or `"palette"`. |
 | `palette_id` | int | optional | WLED color palette ID. |
-| `bake_snapshot` | object | optional | **Only present on mock-device clips.** Contains the full WLED preset payload to be uploaded to the real device. See below. |
+| `bake_snapshot` | object | optional | Present on mock-device clips, **and** on a real-device clip that was not yet written to its device when the file was saved (treat it the same way: bake it before playing). Contains the full WLED preset payload to be uploaded to the real device. See below. |
+| `recipe` | object | optional | *(2026-11)* What the preset at `preset_id` contained when it was written / read. Lets the app re-create the preset when the device lost it. See §3.1. |
 
 ### `bake_snapshot`
 
-Present **only** when the clip lives on a mock device (`is_mock: true` / ip starts with `"mock:"`).  
+Present when the clip lives on a mock device (`is_mock: true` / ip starts with `"mock:"`), or on a
+real-device clip whose preset was not written yet (its `preset_id` is then only a temporary slot).  
 This is the critical field that enables the Android plugin to bake the preset onto the real device.
 
 ```json
@@ -436,6 +449,71 @@ This is the critical field that enables the Android plugin to bake the preset on
 | `payload.seg[].tp` | Palette as background texture (bool). |
 | `payload.seg[].rev` | Reverse direction (bool). |
 | `files` | Optional list of binary files (BMP/GIF images) required by the preset. Each has a `path` (upload target path on device) and `content_b64` (base64-encoded file content). Must be uploaded BEFORE writing `presets.json`. |
+### 3.1 Optional fields added 2026-11 (`version` stays `1`)
+
+> Task brief with algorithms, Kotlin code, a sample file and acceptance tests:
+> [`android-timecode-recipe-task.md`](android-timecode-recipe-task.md).
+
+The desktop tool adds these fields so a timeline survives a device that lost its presets, changed
+IP, or a timeline file moved to another computer. All are **optional and additive**: a reader that
+ignores them keeps working exactly as before, and the desktop tool still opens files without them.
+`version` is still `1`.
+
+#### `clips[j].recipe`
+
+Written for clips whose preset content is known (clip baked by the tool, clip read from a device
+with "Load slot", clip dragged from a device preset). Same shape as `bake_snapshot`, but files are
+stored by hash instead of inline:
+
+```json
+"recipe": {
+  "kind": "preset",
+  "payload": { "n": "Logo", "on": true, "seg": [{ "id": 0, "fx": 122, "n": "/logo.bmp" }] },
+  "files": [ { "path": "/logo.bmp", "size": 12342, "sha256": "9f2c…e1" } ]
+}
+```
+
+- `payload`: the WLED preset that should be at `preset_id` on that track's device.
+- `files[].sha256`: key into the root `recipe_files` table; the value there is the base64 file
+  content. An image used by many clips is stored once.
+
+How the desktop tool uses it (recommended for Android too):
+
+1. Read the device's `presets.json`.
+2. Compare `presets[preset_id]` with `recipe.payload`, **ignoring the top-level `n` / `name`**
+   (canonical form: JSON with sorted keys, no spaces). Equal → nothing to do.
+3. Not equal → look for another slot whose content is equal (same rule). Found → use that slot
+   as the clip's `preset_id`.
+4. Not found → the preset was lost (device reflashed, "Delete memory", another tool overwrote
+   it). Re-create it exactly like a `bake_snapshot`: upload `files` first, then write `payload`
+   into a free Timecode slot, then use that slot as `preset_id`.
+
+A clip with neither `recipe` nor `bake_snapshot` (older files) can only be checked for "slot is
+empty". The desktop tool then reads the slot's current content and keeps it as the recipe.
+
+#### `tracks[i].mac`
+
+The device MAC from `GET /json/info` → `info.mac`, normalized to 12 lowercase hex chars
+(`"AA:BB:CC:DD:EE:01"` → `"aabbccddee01"`). Only written for real devices whose MAC is known.
+
+Use it when the track's `ip` does not answer or answers with another MAC: the router gave the
+device a new IP. Find the device among the discovered ones (mDNS `_hsl._tcp`) by `info.mac` and
+move the track to its new IP. The desktop tool does not merge into a track that already has clips.
+
+#### `audio_rel`
+
+The audio file path relative to the folder of the timeline file (`"music/song.mp3"`), or `null`
+when not on the same drive. Resolution order used by the desktop tool: `audio_path` as is →
+`audio_rel` joined to the timeline file's folder → a file with the same name in the timeline
+file's folder.
+
+#### `recipe_files`
+
+```json
+"recipe_files": { "9f2c…e1": "Qk2…base64…" }
+```
+
+Only referenced by `clips[].recipe.files[].sha256`. May be empty `{}`.
 
 ---
 
@@ -460,6 +538,11 @@ The following preset slot numbers are reserved by the system. **Never use them f
 ---
 
 ## 5. Slot Allocation Algorithm
+
+> **Updated 2026-11 (firmware ≥ 2611090):** devices may accept preset IDs up to `pmax` (1024). Read
+> `GET /json/info` → `fs.pmax` (missing = 250) and allocate **60..240 first, then 256..pmax**, never 251–255.
+> Full rule: [`android-timecode-recipe-task.md`](android-timecode-recipe-task.md) §4.6. The code below is the
+> legacy 60–240-only version.
 
 When baking a mock clip onto a real device, find the **first free slot** in range `[60, 240]`:
 
@@ -649,7 +732,7 @@ POST http://{realIp}/upload  (presets.json with all patches)
 
 #### 3d. Handle preset-type clips (no bake_snapshot)
 
-Clips with `clip_type == "preset"` and no `bake_snapshot` reference a preset that is assumed to **already exist** on some device. If the original `ip` is the same as `realIp`, keep `preset_id` as-is. If not (cross-device mapping), you may warn the user or skip.
+Clips with `clip_type == "preset"` and no `bake_snapshot` reference a preset that is assumed to **already exist** on some device. If the original `ip` is the same as `realIp`, keep `preset_id` as-is. If not (cross-device mapping) and the clip has a `recipe` (2026-11, §3.1), bake the recipe on `realIp` exactly like a `bake_snapshot` ([`android-timecode-recipe-task.md`](android-timecode-recipe-task.md) §4.5). Without a recipe, warn the user or skip.
 
 ### Step 4: Compile the playlist for each real device
 
@@ -911,4 +994,4 @@ fun buildPlaylist(
 
 ---
 
-*Document generated from HSL Tool v3.4.3 source — `ui/timeline_tab.py`, config format version 1.*
+*Document generated from HSL Tool v3.4.4 source — `ui/timeline_tab.py`, `services/timecode_crypto.py`, config format version 1.*

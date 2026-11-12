@@ -43,8 +43,10 @@ class WledRepository(
         if (MockDevice.isMock(device.ipAddress)) {
             val mock = device.copy(
                 isOnline = true,
-                product = "ARGB HSL Controller",
+                product = MockDevice.MOCK_PRODUCT,
                 fwVersion = "mock-0.14",
+                mac = MockDevice.MOCK_MAC,
+                pmax = MockDevice.MOCK_PMAX,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
             wledDao.updateDevice(mock)
@@ -73,7 +75,9 @@ class WledRepository(
                 wifiSignal = info?.wifi?.signal,
                 product = info?.product,
                 fwVersion = info?.ver,
-                vid = info?.vid
+                vid = info?.vid,
+                mac = normMac(info?.mac).ifEmpty { null },
+                pmax = info?.fs?.pmax?.takeIf { it > 0 }
             )
             val prod = info?.product
             if (prod != null && !WledDevice.isValidProduct(prod)) {

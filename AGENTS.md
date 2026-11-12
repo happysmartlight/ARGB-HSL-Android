@@ -45,9 +45,11 @@ là mục tiêu chính.
 
 ## Tính năng Import Timecode (tab Đồng Loạt ALL)
 
-Spec định dạng file: `timecode-json-android-plugin.md`. Luồng: chọn file → phát hiện
-thiết bị Mock → dialog gán Mock→thiết bị thật → bake snapshot vào slot trống (60–240,
-né slot reserved) → biên dịch playlist vào slot 249 → upload presets.json mỗi thiết bị.
+Spec: `docs/timecode-json-android-plugin.md` + `docs/android-timecode-recipe-task.md`.
+Luồng: chọn file → liệt kê mọi track (mock + mạch thật; mạch thật tự gán theo MAC/IP) →
+đối chiếu `presets.json` từng mạch theo `recipe` (ghi lại preset bị mất) → bake vào slot trống
+(60–240 rồi 256..`pmax`, né 100/248/249/250 và 251–255) → playlist 249 → upload dạng gọn + đọc lại.
+Chi tiết đầy đủ: xem `CLAUDE.md`.
 
 ## Lưu ý khác
 

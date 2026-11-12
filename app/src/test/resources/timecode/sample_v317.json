@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "preset_palette": {
+    "source_ip": null,
+    "presets": []
+  },
+  "palette_library": {
+    "source_ip": null,
+    "preview_signature": [],
+    "palettes": [],
+    "preview_data": {}
+  },
+  "audio_path": "D:\\Show\\2026\\music\\song.mp3",
+  "audio_rel": "music/song.mp3",
+  "audio_trim": null,
+  "recipe_files": {
+    "7e55b9b6b0d4f0fa1115e70c888d6dc0b80d9358938214180c67c8fef4625b56": "Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAADEDgAAxA4AAAAAAAAAAAAAAAD/AAD/AAAAAP8AAP8AAA=="
+  },
+  "mock_devices": [
+    {"id": "mock:1", "name": "Stage Left"}
+  ],
+  "tracks": [
+    {
+      "ip": "192.168.1.10",
+      "name": "Gậy 1",
+      "is_mock": false,
+      "clips": [
+        {
+          "preset_id": 60,
+          "name": "Rainbow",
+          "start": 0.0,
+          "duration": 5.0,
+          "transition": 0.5,
+          "clip_type": "effect",
+          "fx_id": 9,
+          "palette_id": 5,
+          "recipe": {
+            "kind": "effect",
+            "payload": {
+              "n": "TMP Rainbow",
+              "seg": [
+                {
+                  "id": 0,
+                  "fx": 9,
+                  "pal": 5,
+                  "col": [[255, 0, 0]]
+                }
+              ]
+            },
+            "files": []
+          }
+        },
+        {
+          "preset_id": 1,
+          "name": "Logo",
+          "start": 6.0,
+          "duration": 4.0,
+          "transition": 0.0,
+          "recipe": {
+            "kind": "preset",
+            "payload": {
+              "on": true,
+              "bri": 128,
+              "seg": [
+                {
+                  "id": 0,
+                  "fx": 122,
+                  "n": "/logo.bmp",
+                  "col": [[255, 160, 0]]
+                }
+              ],
+              "n": "Logo"
+            },
+            "files": [
+              {
+                "path": "/logo.bmp",
+                "size": 70,
+                "sha256": "7e55b9b6b0d4f0fa1115e70c888d6dc0b80d9358938214180c67c8fef4625b56"
+              }
+            ]
+          }
+        },
+        {
+          "preset_id": 61,
+          "name": "Blink",
+          "start": 10.0,
+          "duration": 2.0,
+          "transition": 0.0,
+          "clip_type": "effect",
+          "fx_id": 1,
+          "bake_snapshot": {
+            "kind": "effect",
+            "payload": {
+              "n": "TMP Blink",
+              "seg": [
+                {
+                  "id": 0,
+                  "fx": 1,
+                  "col": [[0, 0, 255]]
+                }
+              ]
+            },
+            "files": []
+          }
+        }
+      ],
+      "mac": "aabbccddee01"
+    },
+    {
+      "ip": "192.168.1.11",
+      "name": "Gậy 2",
+      "is_mock": false,
+      "clips": [
+        {
+          "preset_id": 1,
+          "name": "Logo",
+          "start": 0.0,
+          "duration": 4.0,
+          "transition": 0.0,
+          "recipe": {
+            "kind": "preset",
+            "payload": {
+              "on": true,
+              "bri": 128,
+              "seg": [
+                {
+                  "id": 0,
+                  "fx": 122,
+                  "n": "/logo.bmp",
+                  "col": [[255, 160, 0]]
+                }
+              ],
+              "n": "Logo"
+            },
+            "files": [
+              {
+                "path": "/logo.bmp",
+                "size": 70,
+                "sha256": "7e55b9b6b0d4f0fa1115e70c888d6dc0b80d9358938214180c67c8fef4625b56"
+              }
+            ]
+          }
+        }
+      ],
+      "mac": "aabbccddee02"
+    },
+    {
+      "ip": "mock:1",
+      "name": "Stage Left",
+      "is_mock": true,
+      "clips": [
+        {
+          "preset_id": 62,
+          "name": "Fire",
+          "start": 0.0,
+          "duration": 3.0,
+          "transition": 0.3,
+          "clip_type": "effect",
+          "fx_id": 66,
+          "bake_snapshot": {
+            "kind": "effect",
+            "payload": {
+              "n": "TMP Fire",
+              "seg": [
+                {
+                  "id": 0,
+                  "fx": 66,
+                  "col": [[255, 80, 0]]
+                }
+              ]
+            },
+            "files": []
+          }
+        }
+      ]
+    }
+  ],
+  "timing_marks": [],
+  "defaults": {"duration": 3.0, "transition": 0.7, "slot": 249, "loop": false}
+}

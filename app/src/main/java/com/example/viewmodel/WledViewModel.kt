@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -579,6 +580,8 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshAllDevices() {
+        // Quét lại danh sách → mọi mạch phải đối chiếu preset lại trước lần Phát sau (§5.1).
+        verifiedIps.clear()
         viewModelScope.launch {
             _isRefreshing.value = true
             devices.value.forEach { device ->
@@ -897,16 +900,20 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun buildPresetStats(deviceId: Int, presets: org.json.JSONObject): DevicePresetStorageStats {
         val ids = activePresetIds(presets)
+        val knownPmax = devices.value.find { it.id == deviceId }?.pmax
+            ?: _selectedDevice.value?.takeIf { it.id == deviceId }?.pmax
+        val pmax = PresetSlots.pmaxHint(knownPmax, presets)
         return DevicePresetStorageStats(
             deviceId = deviceId,
             logoUsed = ids.count { it in logoPresetRange },
             logoCapacity = logoPresetRange.count(),
-            timecodeUsed = ids.count { it in timecodePresetRange && it !in timecodeAllocationSkipSlots },
-            timecodeCapacity = timecodeSlotCapacity,
+            timecodeUsed = ids.count { PresetSlots.isTimecodeSlot(it) },
+            timecodeCapacity = PresetSlots.timecodeSlots(pmax).size,
             systemUsed = ids.count { it in systemPresetSlots },
             systemCapacity = systemPresetSlots.size,
-            otherUsed = ids.count { it !in logoPresetRange && it !in timecodePresetRange && it !in systemPresetSlots },
-            totalPresets = ids.size
+            otherUsed = ids.count { it !in logoPresetRange && !PresetSlots.isTimecodeSlot(it) && it !in systemPresetSlots },
+            totalPresets = ids.size,
+            pmax = pmax
         )
     }
 
@@ -991,8 +998,8 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private fun isPresetTargetForAction(pid: Int, action: PresetDeleteAction): Boolean {
         return when (action) {
             PresetDeleteAction.LOGO_IMAGES -> pid in logoPresetRange
-            PresetDeleteAction.TIMECODE_GROUP -> (pid in timecodePresetRange && pid !in timecodeAllocationSkipSlots) || pid == playlistPresetSlot
-            PresetDeleteAction.ALL_EXCEPT_SYSTEM -> pid !in protectedPresetSlots
+            PresetDeleteAction.TIMECODE_GROUP -> PresetSlots.isTimecodeSlot(pid) || pid == playlistPresetSlot
+            PresetDeleteAction.ALL_EXCEPT_SYSTEM -> pid !in protectedPresetSlots && pid !in PresetSlots.RESERVED
         }
     }
 
@@ -1023,6 +1030,8 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun deletePresetSlot(ip: String, pid: Int) {
         if (MockDevice.isMock(ip)) return
+        // Không bao giờ pdel 250 (preset nút bấm) hay 251–255 (firmware giữ riêng).
+        if (pid == PresetSlots.BUTTON || pid in PresetSlots.RESERVED) return
         api.updateState("http://$ip/json/state", WledStateRequest(pdel = pid))
     }
 
@@ -1047,8 +1056,14 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     // TÌM & DỌN ẢNH .bmp/.gif TRÊN FILESYSTEM (chọn từng file để xóa)
     // ---------------------------------------------------------------------------
 
-    /** Liệt kê toàn bộ file trên thiết bị qua GET /edit?list=/ rồi lọc ra .bmp/.gif. */
-    private suspend fun listDeviceImageFiles(ip: String): List<DeviceImageFile> = withContext(Dispatchers.IO) {
+    /** Liệt kê file .bmp/.gif trên thiết bị (lớn trước). */
+    private suspend fun listDeviceImageFiles(ip: String): List<DeviceImageFile> =
+        fetchDeviceFileEntries(ip)
+            .filter { val l = it.path.lowercase(); l.endsWith(".bmp") || l.endsWith(".gif") }
+            .sortedByDescending { it.sizeBytes }
+
+    /** Liệt kê toàn bộ file trên thiết bị qua GET /edit?list=/ (bỏ thư mục). */
+    private suspend fun fetchDeviceFileEntries(ip: String): List<DeviceImageFile> = withContext(Dispatchers.IO) {
         if (MockDevice.isMock(ip)) return@withContext emptyList()
         val request = okhttp3.Request.Builder()
             .url("http://$ip/edit?list=/")
@@ -1073,12 +1088,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 var name = o.optString("name", "").trim()
                 if (name.isBlank()) continue
                 if (!name.startsWith("/")) name = "/$name"
-                val lower = name.lowercase()
-                if (lower.endsWith(".bmp") || lower.endsWith(".gif")) {
-                    out += DeviceImageFile(path = name, sizeBytes = o.optLong("size", 0L))
-                }
+                out += DeviceImageFile(path = name, sizeBytes = o.optLong("size", 0L))
             }
-            out.sortedByDescending { it.sizeBytes }
+            out
         }
     }
 
@@ -1210,6 +1222,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             onlineDevices.map { device ->
                 async {
                     val url = "http://${device.ipAddress}/json/state"
+                    if (MockDevice.isMock(device.ipAddress)) {
+                        return@async FreezeCommandResult(device.name, device.ipAddress, success = true)
+                    }
                     try {
                         val segmentIds = try {
                             api.getState(url)
@@ -1312,21 +1327,37 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         val freezeSummary = setFreezeAllOnlineDevices(false)
         logFreezeWarningIfNeeded(freezeSummary, "Chuẩn bị chạy playlist $playlistId")
 
-        withContext(Dispatchers.IO) {
-            devices.value.map { device ->
-                async {
-                    val url = "http://${device.ipAddress}/json/state"
-                    try {
-                        val stateReq = WledStateRequest(on = true, ps = playlistId)
-                        api.updateState(url, stateReq)
-                        // Update local state isOnline and lastSeen
-                        val updated = device.copy(isOn = true, isOnline = true, lastSeenTimestamp = System.currentTimeMillis())
-                        repository.updateDeviceInDb(updated)
-                    } catch (e: Exception) {
-                        android.util.Log.e("WledViewModel", "Error running playlist $playlistId for ${device.ipAddress}", e)
-                    }
+        // §5.4: dựng lệnh cho mọi mạch trước, rồi gửi CÙNG 1 THỜI ĐIỂM (trước đây gửi lần lượt
+        // làm mạch sau chậm 50–300 ms).
+        // Chỉ mạch đang online: mạch mất kết nối không phát được mà còn làm chậm phần báo kết quả.
+        val targets = devices.value.filter { it.isOnline }
+        if (targets.isEmpty()) return
+        val body = "{\"on\":true,\"seg\":[{\"id\":0,\"frz\":false}],\"ps\":$playlistId}"
+        val pending = postStateTogether(targets.map { it.ipAddress }, body)
+
+        // Lệnh đã gửi → trả về ngay để nhạc bắt đầu cùng LED; báo cáo kết quả chạy nền.
+        viewModelScope.launch(Dispatchers.IO) {
+            val results = pending.mapValues { it.value.await() }
+            val sentAt = results.values.mapNotNull { it.getOrNull() }
+            if (sentAt.size >= 2) {
+                val spreadMs = (sentAt.max() - sentAt.min()) / 1_000_000.0
+                log(
+                    "Phát playlist $playlistId đồng loạt ${sentAt.size} mạch — lệch thời điểm gửi " +
+                        String.format(java.util.Locale.US, "%.2f", spreadMs) + " ms",
+                    "INFO"
+                )
+            }
+            for (device in targets) {
+                val r = results[device.ipAddress] ?: continue
+                if (r.isSuccess) {
+                    repository.updateDeviceInDb(
+                        device.copy(isOn = true, isOnline = true, lastSeenTimestamp = System.currentTimeMillis())
+                    )
+                } else {
+                    android.util.Log.e("WledViewModel", "Error running playlist $playlistId for ${device.ipAddress}", r.exceptionOrNull())
+                    if (device.isOnline) log("Không gửi được lệnh Phát tới ${device.name}: ${r.exceptionOrNull()?.message}", "WARN")
                 }
-            }.awaitAll()
+            }
         }
     }
 
@@ -1935,6 +1966,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         updateActiveSteps(startFrom)
 
         playlistTimelineJob = viewModelScope.launch {
+            // §5.1: mạch vừa cắm lại có thể đã mất preset — kiểm (và ghi lại nếu được) trước khi phát.
+            verifyDevicesBeforePlay(playlistId)
+
             var duration = manualDuration
             if (duration == null) {
                 // Try to detect and parse from active device
@@ -2062,7 +2096,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
      * Fetch WLED devices' presets.json to parse step durations and transitions
      */
     private suspend fun fetchPlaylistDurationFromDevice(playlistId: Int): Int? = withContext(Dispatchers.IO) {
-        val onlineDevice = devices.value.find { it.isOnline } ?: return@withContext null
+        val onlineDevice = devices.value.find { it.isOnline && !MockDevice.isMock(it.ipAddress) } ?: return@withContext null
         val url = "http://${onlineDevice.ipAddress}/presets.json"
         try {
             val client = okhttp3.OkHttpClient.Builder()
@@ -2143,118 +2177,154 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ============================================================
-    // TIMECODE IMPORT & UPLOAD (mock -> real device mapping flow)
+    // TIMECODE IMPORT & UPLOAD — file desktop v3.17+: track mock + mạch thật, recipe, MAC.
+    // Spec: docs/timecode-json-android-plugin.md + docs/android-timecode-recipe-task.md
     // ============================================================
 
     // 249 is a fixed playlist slot, but user-requested preset cleanup is allowed to delete it.
-    private val systemPresetSlots = setOf(100, 248, 249, 250)
-    private val protectedPresetSlots = setOf(100, 248, 250)
-    private val playlistPresetSlot = 249
-    private val logoPresetRange = 1..59
-    private val timecodePresetRange = 60..240
-    private val timecodeAllocationSkipSlots = systemPresetSlots
-    private val timecodeSlotCapacity = timecodePresetRange.count { it !in timecodeAllocationSkipSlots }
+    private val systemPresetSlots = PresetSlots.SYSTEM
+    private val protectedPresetSlots = setOf(PresetSlots.AUTOSAVE, PresetSlots.OFF, PresetSlots.BUTTON)
+    private val playlistPresetSlot = PresetSlots.PLAYLIST
+    private val logoPresetRange = PresetSlots.LOGO_RANGE
     private val imageFileExtensions = setOf(".gif", ".bmp", ".png", ".jpg", ".jpeg")
     private val presetFileClient = okhttp3.OkHttpClient.Builder()
         .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
         .build()
-
-    private val timecodeSkipSlots = timecodeAllocationSkipSlots
-    private val timecodeSlotRange = 60..240
-    private val timecodeGapTolerance = 0.05
+    private val playClient = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+    /** Gửi JSON dạng UTF-8 thật (§5.5) — firmware lưu nguyên `\uXXXX` nếu gửi escape. */
+    private val jsonUtf8 = "application/json; charset=utf-8".toMediaTypeOrNull()
 
     private val _timecodeImportState = MutableStateFlow(TimecodeImportUiState())
     val timecodeImportState: StateFlow<TimecodeImportUiState> = _timecodeImportState.asStateFlow()
 
-    // Holds the parsed config between "open dialog" and "confirm mapping".
-    private var pendingTimecodeConfig: org.json.JSONObject? = null
+    // Giữ file đã parse giữa "mở dialog" và "xác nhận gán".
+    private var pendingTimecodeFile: TimecodeFile? = null
+    private var pendingTimecodeRaw: String? = null
+
+    /** IP đã đối chiếu presets.json kể từ lần online gần nhất (§5.1). */
+    private val verifiedIps: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private val lastMacByIp = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    init {
+        // Mạch mất kết nối, hoặc IP giờ trả lời bằng MAC khác → đối chiếu lại trước lần Phát sau
+        // (mạch có thể đã nạp lại firmware / xoá bộ nhớ / IP thuộc mạch khác).
+        viewModelScope.launch {
+            repository.allDevices.collect { list ->
+                for (d in list) {
+                    if (!d.isOnline) {
+                        verifiedIps.remove(d.ipAddress)
+                        continue
+                    }
+                    val mac = d.mac ?: continue
+                    val prev = lastMacByIp.put(d.ipAddress, mac)
+                    if (prev != null && prev != mac) verifiedIps.remove(d.ipAddress)
+                }
+            }
+        }
+    }
 
     /**
-     * Step 1: parse the picked timecode file, extract the mock devices and open the
-     * mapping dialog. Does NOT touch the network.
+     * Bước 1: giải mã + parse file, tự nhận track mạch thật theo MAC/IP rồi mở dialog gán.
+     * Chỉ đọc mạng để lấy MAC của mạch đã lưu chưa biết MAC.
      */
     fun prepareTimecodeImport(jsonString: String) {
-        try {
-            val config = TimecodeCrypto.decryptTimecode(jsonString)
-            val version = config.optInt("version", 1)
-            if (version > 1) {
-                _timecodeImportState.value = TimecodeImportUiState(
-                    resultMessage = "File timecode phiên bản $version chưa được hỗ trợ (app hỗ trợ tối đa v1)."
-                )
-                return
-            }
-
-            // Count clips per mock device id from the tracks array.
-            val clipCounts = mutableMapOf<String, Int>()
-            val tracks = config.optJSONArray("tracks")
-            if (tracks != null) {
-                for (i in 0 until tracks.length()) {
-                    val track = tracks.getJSONObject(i)
-                    val ip = track.optString("ip")
-                    if (!ip.startsWith("mock:")) continue
-                    val clips = track.optJSONArray("clips")
-                    clipCounts[ip] = (clipCounts[ip] ?: 0) + (clips?.length() ?: 0)
-                }
-            }
-
-            // Build the mock device list. Prefer the explicit mock_devices array,
-            // but fall back to any mock track ip we found.
-            val mockDevices = mutableListOf<TimecodeMockDevice>()
-            val seen = mutableSetOf<String>()
-            val mockArray = config.optJSONArray("mock_devices")
-            if (mockArray != null) {
-                for (i in 0 until mockArray.length()) {
-                    val m = mockArray.getJSONObject(i)
-                    val id = m.optString("id")
-                    if (id.isBlank() || !seen.add(id)) continue
-                    mockDevices.add(
-                        TimecodeMockDevice(
-                            id = id,
-                            name = m.optString("name", id),
-                            clipCount = clipCounts[id] ?: 0
-                        )
+        viewModelScope.launch {
+            try {
+                val config = withContext(Dispatchers.Default) { TimecodeCrypto.decryptTimecode(jsonString) }
+                val version = config.optInt("version", 1)
+                if (version > 1) {
+                    _timecodeImportState.value = TimecodeImportUiState(
+                        resultMessage = "File timecode phiên bản $version chưa được hỗ trợ (app hỗ trợ tối đa v1)."
                     )
+                    return@launch
                 }
-            }
-            // Include mock tracks that weren't listed in mock_devices.
-            for ((id, count) in clipCounts) {
-                if (seen.add(id)) {
-                    mockDevices.add(TimecodeMockDevice(id = id, name = id, clipCount = count))
+                val file = TimecodeFile.parse(config)
+                val tracks = file.tracks.filter { it.clips.isNotEmpty() }
+                if (tracks.isEmpty()) {
+                    pendingTimecodeFile = null
+                    pendingTimecodeRaw = null
+                    _timecodeImportState.value = TimecodeImportUiState(
+                        resultMessage = "File timecode không có track nào chứa clip."
+                    )
+                    return@launch
                 }
-            }
-
-            if (mockDevices.isEmpty()) {
-                _timecodeImportState.value = TimecodeImportUiState(
-                    resultMessage = "Không tìm thấy thiết bị Mock nào trong file timecode."
+                val registered = refreshDeviceMacs()
+                val matches = TrackMatcher.autoMatch(
+                    tracks,
+                    registered.map { TrackMatcher.Candidate(it.ipAddress, it.mac) }
                 )
-                pendingTimecodeConfig = null
-                return
+                pendingTimecodeFile = file
+                pendingTimecodeRaw = jsonString
+                _timecodeImportState.value = TimecodeImportUiState(
+                    showDialog = true,
+                    tracks = tracks.map { buildTrackItem(it, matches[it.index]) },
+                    audioFileName = file.audioFileName
+                )
+            } catch (e: TimecodeCryptoException) {
+                android.util.Log.e("WledViewModel", "Error decrypting timecode", e)
+                pendingTimecodeFile = null
+                pendingTimecodeRaw = null
+                _timecodeImportState.value = TimecodeImportUiState(
+                    resultMessage = "File timecode không đúng định dạng HSL đã mã hóa hoặc đã bị chỉnh sửa.\n${e.message}"
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("WledViewModel", "Error parsing timecode", e)
+                pendingTimecodeFile = null
+                pendingTimecodeRaw = null
+                _timecodeImportState.value = TimecodeImportUiState(
+                    resultMessage = "Lỗi đọc file timecode: ${e.message}"
+                )
             }
-
-            pendingTimecodeConfig = config
-            _timecodeImportState.value = TimecodeImportUiState(
-                showDialog = true,
-                mockDevices = mockDevices
-            )
-        } catch (e: TimecodeCryptoException) {
-            android.util.Log.e("WledViewModel", "Error decrypting timecode", e)
-            _timecodeImportState.value = TimecodeImportUiState(
-                resultMessage = "File timecode không đúng định dạng HSL đã mã hóa hoặc đã bị chỉnh sửa.\n${e.message}"
-            )
-            pendingTimecodeConfig = null
-        } catch (e: Exception) {
-            android.util.Log.e("WledViewModel", "Error parsing timecode", e)
-            _timecodeImportState.value = TimecodeImportUiState(
-                resultMessage = "Lỗi đọc file timecode: ${e.message}"
-            )
-            pendingTimecodeConfig = null
         }
+    }
+
+    /** Đọc MAC cho mạch online đã lưu nhưng chưa biết MAC (bản cũ chưa lưu cột này), tối đa ~2.5 s. */
+    private suspend fun refreshDeviceMacs(): List<WledDevice> = withContext(Dispatchers.IO) {
+        fun valid(list: List<WledDevice>) = list.filter { it.product == null || WledDevice.isValidProduct(it.product) }
+        val all = valid(repository.allDevices.first())
+        val stale = all.filter { it.mac == null && it.isOnline && !MockDevice.isMock(it.ipAddress) }
+        if (stale.isNotEmpty()) {
+            kotlinx.coroutines.withTimeoutOrNull(2500) {
+                stale.map { d -> async { runCatching { repository.pingDevice(d) } } }.awaitAll()
+            }
+        }
+        valid(repository.allDevices.first())
+    }
+
+    private fun buildTrackItem(t: TimelineTrack, m: TrackMatcher.Match?): TimecodeTrackItem {
+        val note = when {
+            t.isMock -> null
+            m == null -> null
+            m.kind == TrackMatcher.Kind.MAC -> "Đúng mạch (khớp MAC)"
+            m.kind == TrackMatcher.Kind.MAC_NEW_IP -> "Mạch đã đổi IP ${t.ip} → ${m.ip} (khớp MAC)"
+            m.kind == TrackMatcher.Kind.IP ->
+                if (t.mac.isEmpty()) "Nhận theo IP (file không có MAC)" else "Nhận theo IP (chưa đọc được MAC của mạch)"
+            m.kind == TrackMatcher.Kind.IP_OTHER_DEVICE -> "IP ${t.ip} giờ là mạch khác — hãy chọn mạch"
+            else -> "Chưa thấy mạch này trong danh sách — hãy chọn mạch"
+        }
+        return TimecodeTrackItem(
+            key = t.index,
+            name = t.name,
+            sourceIp = t.ip,
+            isMock = t.isMock,
+            mac = t.mac,
+            clipCount = t.clips.size,
+            recipeCount = t.recipeCount,
+            pendingBakeCount = t.pendingBakeCount,
+            autoIp = m?.ip,
+            matchNote = note
+        )
     }
 
     /** Dismiss the mapping dialog without uploading. */
     fun cancelTimecodeImport() {
-        pendingTimecodeConfig = null
+        pendingTimecodeFile = null
+        pendingTimecodeRaw = null
         _timecodeImportState.value = TimecodeImportUiState()
     }
 
@@ -2268,88 +2338,75 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Step 3-6 of the guide: for each (mockId -> real device IP) pair, bake the mock
-     * clips onto the real device, compile the playlist into slot 249 and upload once.
-     * @param mapping mock device id -> real device IP address.
+     * Bước 2: với mỗi cặp (track → IP mạch thật) đối chiếu / ghi preset, biên dịch playlist 249
+     * và upload presets.json 1 lần (đọc lại để xác nhận). Các mạch chạy song song.
+     * @param mapping chỉ số track trong file → IP mạch thật.
      */
-    fun confirmTimecodeMapping(mapping: Map<String, String>) {
-        val config = pendingTimecodeConfig
-        if (config == null) {
+    fun confirmTimecodeMapping(mapping: Map<Int, String>) {
+        val file = pendingTimecodeFile
+        if (file == null) {
             _timecodeImportState.value = TimecodeImportUiState(resultMessage = "Không có dữ liệu timecode để nạp.")
             return
         }
-        val validMapping = mapping.filterValues { it.isNotBlank() }
-        if (validMapping.isEmpty()) {
+        val valid = mapping.filterValues { it.isNotBlank() }
+        if (valid.isEmpty()) {
             _timecodeImportState.value = _timecodeImportState.value.copy(
-                resultMessage = "Vui lòng gán ít nhất một thiết bị Mock với thiết bị thật."
+                resultMessage = "Vui lòng gán ít nhất một track với thiết bị thật."
             )
             return
         }
-
-        _timecodeImportState.value = _timecodeImportState.value.copy(isProcessing = true, resultMessage = null)
+        if (valid.values.toSet().size != valid.size) {
+            _timecodeImportState.value = _timecodeImportState.value.copy(
+                resultMessage = "Mỗi mạch chỉ nhận một track."
+            )
+            return
+        }
+        val raw = pendingTimecodeRaw
+        _timecodeImportState.value = _timecodeImportState.value.copy(
+            isProcessing = true,
+            resultMessage = null,
+            progressNote = "Đang đối chiếu preset trên ${valid.size} mạch..."
+        )
 
         viewModelScope.launch(Dispatchers.IO) {
-            val tracks = config.optJSONArray("tracks") ?: org.json.JSONArray()
-            val defaults = config.optJSONObject("defaults")
-            val loop = defaults?.optBoolean("loop", false) ?: false
+            val byIndex = file.tracks.associateBy { it.index }
+            // Mọi mạch cùng độ dài timeline (OFF đệm cuối cho track ngắn hơn).
+            val timelineSeconds = valid.keys.mapNotNull { byIndex[it]?.endSeconds }.maxOrNull() ?: 0.0
+            val known = repository.allDevices.first()
+            val done = java.util.concurrent.atomic.AtomicInteger(0)
 
-            // Timeline length = furthest clip end across every mapped mock track, so all
-            // devices share the same total duration (trailing OFF pads the shorter ones).
-            var timelineSeconds = 0.0
-            for (i in 0 until tracks.length()) {
-                val track = tracks.getJSONObject(i)
-                if (!validMapping.containsKey(track.optString("ip"))) continue
-                val clips = track.optJSONArray("clips") ?: continue
-                for (j in 0 until clips.length()) {
-                    val clip = clips.getJSONObject(j)
-                    val end = clip.optDouble("start", 0.0) + clip.optDouble("duration", 0.0)
-                    if (end > timelineSeconds) timelineSeconds = end
+            val results = valid.map { (idx, ip) ->
+                async {
+                    val track = byIndex.getValue(idx)
+                    val name = known.find { it.ipAddress == ip }?.name ?: ip
+                    val r = importTrackToDevice(file, track, ip, name, timelineSeconds)
+                    val n = done.incrementAndGet()
+                    _timecodeImportState.update { it.copy(progressNote = "Đã xử lý $n/${valid.size} mạch...") }
+                    r
                 }
-            }
+            }.awaitAll()
 
-            val results = mutableListOf<TimecodeUploadResult>()
-            for ((mockId, realIp) in validMapping) {
-                val mockDevice = _timecodeImportState.value.mockDevices.find { it.id == mockId }
-                val mockName = mockDevice?.name ?: mockId
-                val deviceName = devices.value.find { it.ipAddress == realIp }?.name ?: realIp
-                try {
-                    val uploaded = bakeAndUploadForDevice(config, mockId, realIp, timelineSeconds, loop)
-                    results.add(
-                        TimecodeUploadResult(
-                            mockName = mockName,
-                            deviceName = deviceName,
-                            deviceIp = realIp,
-                            clipCount = uploaded,
-                            success = true
-                        )
-                    )
-                    log("Timecode: nạp $uploaded clip vào $deviceName ($realIp) từ \"$mockName\" thành công.", "INFO")
-                } catch (e: Exception) {
-                    android.util.Log.e("WledViewModel", "Timecode upload failed for $realIp", e)
-                    results.add(
-                        TimecodeUploadResult(
-                            mockName = mockName,
-                            deviceName = deviceName,
-                            deviceIp = realIp,
-                            clipCount = 0,
-                            success = false,
-                            error = e.message ?: "Lỗi không xác định"
-                        )
-                    )
-                    log("Timecode: lỗi nạp vào $deviceName ($realIp) - ${e.message}", "ERROR")
-                }
+            val ok = results.filter { it.success }
+            if (raw != null && ok.isNotEmpty()) {
+                saveLastImport(raw, ok, timelineSeconds)
             }
+            val audioStatus = if (ok.isNotEmpty()) {
+                withContext(Dispatchers.Main) { matchTimecodeAudio(file.audioFileName) }
+            } else TimecodeAudioStatus.NONE
 
-            pendingTimecodeConfig = null
+            pendingTimecodeFile = null
+            pendingTimecodeRaw = null
             _timecodeImportState.value = TimecodeImportUiState(
                 showDialog = false,
                 isProcessing = false,
                 results = results,
                 showResult = true,
-                totalSeconds = timelineSeconds
+                totalSeconds = timelineSeconds,
+                audioFileName = file.audioFileName,
+                audioStatus = audioStatus
             )
 
-            if (results.any { it.success }) {
+            if (ok.isNotEmpty()) {
                 delay(500)
                 fetchTimelinesForAllDevices(playlistPresetSlot)
                 refreshOnlineDevicePresetStats()
@@ -2359,176 +2416,404 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Read presets.json from [realIp], bake every mock clip with a bake_snapshot into a
-     * free slot, compile the playlist into slot 249 and upload the whole presets.json once.
-     * @return number of clips written into the playlist.
+     * Đối chiếu + ghi 1 track lên 1 mạch (§4.4, §4.5, §5.2, §5.3). Không ghi gì nếu có clip không
+     * phát đúng được (thiếu preset / thiếu ảnh) — báo rõ từng clip.
      */
-    private suspend fun bakeAndUploadForDevice(
-        config: org.json.JSONObject,
-        mockId: String,
-        realIp: String,
-        timelineSeconds: Double,
-        loop: Boolean
-    ): Int = withContext(Dispatchers.IO) {
-        // Gather and time-sort this mock device's clips.
-        val tracks = config.optJSONArray("tracks") ?: org.json.JSONArray()
-        val clips = mutableListOf<org.json.JSONObject>()
-        for (i in 0 until tracks.length()) {
-            val track = tracks.getJSONObject(i)
-            if (track.optString("ip") != mockId) continue
-            val cs = track.optJSONArray("clips") ?: continue
-            for (j in 0 until cs.length()) clips.add(cs.getJSONObject(j))
-        }
-        clips.sortBy { it.optDouble("start", 0.0) }
-
-        // Read the device's existing presets so we don't clobber the user's slots.
-        val presets = fetchPresetsJsonObject(realIp)
-
-        // Upload binary file dependencies first (deduped by path).
-        val uploadedFiles = mutableSetOf<String>()
-        for (clip in clips) {
-            val snapshot = clip.optJSONObject("bake_snapshot") ?: continue
-            val files = snapshot.optJSONArray("files") ?: continue
-            for (k in 0 until files.length()) {
-                val file = files.getJSONObject(k)
-                val path = file.optString("path")
-                val b64 = file.optString("content_b64", "")
-                if (path.isBlank() || b64.isBlank() || !uploadedFiles.add(path)) continue
-                uploadBinaryFile(realIp, path, b64)
+    private suspend fun importTrackToDevice(
+        file: TimecodeFile,
+        track: TimelineTrack,
+        ip: String,
+        deviceName: String,
+        timelineSeconds: Double
+    ): TimecodeUploadResult = withContext(Dispatchers.IO) {
+        var deviceMac = ""
+        try {
+            val identity = try {
+                fetchDeviceIdentity(ip)
+            } catch (e: java.io.IOException) {
+                throw Exception("Không kết nối được mạch ($ip). Kiểm tra nguồn và WiFi.")
             }
-        }
-
-        // Bake clips + build playlist entries in timeline order.
-        val psArray = org.json.JSONArray()
-        val durArray = org.json.JSONArray()
-        val transArray = org.json.JSONArray()
-        var lastEnd = 0.0
-        var needsOff = false
-        var clipCount = 0
-
-        for (clip in clips) {
-            val start = clip.optDouble("start", 0.0)
-            val duration = clip.optDouble("duration", 0.0)
-            val transition = clip.optDouble("transition", 0.0)
-
-            // Insert OFF placeholder for the gap before this clip.
-            val gap = start - lastEnd
-            if (gap > timecodeGapTolerance) {
-                psArray.put(248)
-                durArray.put(maxOf(1, Math.round(gap * 10).toInt()))
-                transArray.put(0)
-                needsOff = true
-            }
-
-            val snapshot = clip.optJSONObject("bake_snapshot")
-            val slot: Int
-            if (snapshot != null) {
-                val payload = snapshot.optJSONObject("payload")
-                    ?: throw Exception("bake_snapshot thiếu payload")
-                val free = findFreeSlot(presets)
-                    ?: throw Exception("Hết slot trống (60-240) trên thiết bị")
-                presets.put(free.toString(), payload)
-                slot = free
+            deviceMac = identity.mac
+            val pmax = identity.pmax
+            val sameDevice = !track.isMock && if (track.mac.isNotEmpty() && identity.mac.isNotEmpty()) {
+                identity.mac == track.mac
             } else {
-                // Preset-type clip that references a preset already on the device.
-                val pid = clip.optInt("preset_id", -1)
-                if (pid <= 0) {
-                    lastEnd = maxOf(lastEnd, start + duration)
-                    continue
-                }
-                slot = pid
+                ip == track.ip
             }
 
-            psArray.put(slot)
-            durArray.put(maxOf(1, Math.round(duration * 10).toInt()))
-            transArray.put(maxOf(0, Math.round(transition * 10).toInt()))
-            lastEnd = maxOf(lastEnd, start + duration)
-            clipCount++
+            val presetsText = fetchPresetsText(ip)
+            val presets = parsePresetsText(presetsText)
+            var plan = TimecodePlanner.plan(track.clips, file.recipeTable, file.recipeCache, presets, pmax, sameDevice, null)
+            if (plan.needsDeviceFiles) {
+                val files = listDeviceFilePaths(ip)
+                plan = TimecodePlanner.plan(track.clips, file.recipeTable, file.recipeCache, presets, pmax, sameDevice, files)
+            }
+            if (plan.problems.isNotEmpty()) {
+                throw Exception("Không nạp để tránh phát sai:\n• " + plan.problems.joinToString("\n• "))
+            }
+            if (plan.clips.all { it.action == TimecodePlanner.Action.OFF }) {
+                throw Exception("Track không có clip hợp lệ")
+            }
+
+            // Ảnh trước, presets.json sau (preset tham chiếu ảnh qua seg[].n).
+            for ((path, bytes) in plan.uploads) uploadImageWithRetry(ip, path, bytes)
+
+            backupPresets(identity.mac.ifEmpty { ip }, presetsText, ip)
+            val applied = TimecodePlanner.apply(plan, presets, pmax, timelineSeconds, file.loop)
+            val missing = TimecodePlanner.missingPlaylistRefs(presets, applied.ps, pmax)
+            if (missing.isNotEmpty()) {
+                throw Exception("Playlist gọi preset không có trên mạch: ${missing.joinToString()}")
+            }
+            uploadPresetsVerified(ip, presets, applied.writtenSlots)
+            verifiedIps += ip
+
+            val baked = plan.clips.filter { it.action == TimecodePlanner.Action.BAKE }
+            val details = buildList {
+                val matched = plan.count(TimecodePlanner.Action.OK) + plan.count(TimecodePlanner.Action.EXISTING)
+                if (matched > 0) add("$matched clip khớp preset sẵn có")
+                val repointed = plan.count(TimecodePlanner.Action.REPOINTED)
+                if (repointed > 0) add("$repointed clip dùng lại preset giống hệt ở slot khác")
+                if (baked.isNotEmpty()) {
+                    val slots = baked.mapNotNull { it.slot }.distinct()
+                    val lost = baked.count { it.note != null }
+                    add(
+                        "${slots.size} preset ghi mới (slot ${compactRanges(slots)})" +
+                            if (lost > 0) " — $lost clip bị mất preset đã được ghi lại" else ""
+                    )
+                }
+                if (plan.uploads.isNotEmpty()) add("${plan.uploads.size} ảnh tải lên")
+                if (pmax >= PresetSlots.EXT_START) add("Mạch hỗ trợ ID preset tới $pmax")
+            }
+            log(
+                "Timecode: nạp ${applied.clipCount} clip \"${track.name}\" → $deviceName ($ip). " + details.joinToString("; "),
+                "INFO"
+            )
+            plan.warnings.forEach { log("Timecode $deviceName: $it", "WARN") }
+            TimecodeUploadResult(
+                trackKey = track.index,
+                trackName = track.name,
+                deviceName = deviceName,
+                deviceIp = ip,
+                deviceMac = deviceMac,
+                clipCount = applied.clipCount,
+                success = true,
+                details = details,
+                warnings = plan.warnings
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("WledViewModel", "Timecode upload failed for $ip", e)
+            log("Timecode: lỗi nạp \"${track.name}\" vào $deviceName ($ip) - ${e.message}", "ERROR")
+            TimecodeUploadResult(
+                trackKey = track.index,
+                trackName = track.name,
+                deviceName = deviceName,
+                deviceIp = ip,
+                deviceMac = deviceMac,
+                clipCount = 0,
+                success = false,
+                error = e.message ?: "Lỗi không xác định"
+            )
         }
-
-        // Trailing OFF so every device ends at the same timeline length.
-        val trailing = timelineSeconds - lastEnd
-        if (trailing > timecodeGapTolerance) {
-            psArray.put(248)
-            durArray.put(maxOf(1, Math.round(trailing * 10).toInt()))
-            transArray.put(0)
-            needsOff = true
-        }
-
-        if (clipCount == 0) throw Exception("Thiết bị Mock không có clip hợp lệ")
-
-        // TIMELINE_OFF placeholder preset (slot 248) if any gap exists.
-        if (needsOff) {
-            presets.put("248", buildTimelineOffPreset())
-        }
-
-        // Compile playlist into slot 249.
-        val playlist = org.json.JSONObject().apply {
-            put("ps", psArray)
-            put("dur", durArray)
-            put("transition", transArray)
-            put("repeat", if (loop) 0 else 1)
-            put("end", 0)
-            put("r", 0)
-        }
-        presets.put("249", org.json.JSONObject().apply {
-            put("playlist", playlist)
-            put("on", true)
-            put("n", "Timecode 249")
-        })
-
-        // Single upload of the merged presets.json.
-        uploadPresetsJson(realIp, presets.toString())
-        clipCount
     }
 
-    /** GET /presets.json → JSONObject. Returns an empty object if the device has none. */
-    private suspend fun fetchPresetsJsonObject(ip: String): org.json.JSONObject = withContext(Dispatchers.IO) {
-        if (MockDevice.isMock(ip)) return@withContext org.json.JSONObject(MockDevice.cannedPresetsJson())
-        val client = okhttp3.OkHttpClient.Builder()
-            .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-            .build()
+    /** "60–63, 70, 256" từ danh sách slot. */
+    private fun compactRanges(slots: List<Int>): String {
+        val sorted = slots.sorted()
+        val parts = mutableListOf<String>()
+        var i = 0
+        while (i < sorted.size) {
+            var j = i
+            while (j + 1 < sorted.size && sorted[j + 1] == sorted[j] + 1) j++
+            parts += if (j > i) "${sorted[i]}–${sorted[j]}" else "${sorted[i]}"
+            i = j + 1
+        }
+        return parts.joinToString(", ")
+    }
+
+    /** Nhạc của timeline: tự chọn lại nếu file cùng tên có trong lịch sử nhạc (§4.7). */
+    private fun matchTimecodeAudio(fileName: String?): TimecodeAudioStatus {
+        if (fileName.isNullOrBlank()) return TimecodeAudioStatus.NONE
+        if (_selectedAudioName.value.equals(fileName, ignoreCase = true)) return TimecodeAudioStatus.ALREADY_SELECTED
+        val hit = _audioHistory.value.firstOrNull { it.name.equals(fileName, ignoreCase = true) }
+            ?: return TimecodeAudioStatus.MISSING
+        return try {
+            setCustomAudio(android.net.Uri.parse(hit.uriString), hit.name, hit.duration)
+            log("Timecode: tự chọn nhạc \"${hit.name}\" theo file timeline.", "INFO")
+            TimecodeAudioStatus.AUTO_SELECTED
+        } catch (e: Exception) {
+            TimecodeAudioStatus.MISSING
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Lần nạp timecode gần nhất — để ghi lại preset khi mạch bị xoá / nạp lại firmware (§5.1)
+    // Lưu nguyên file đã MÃ HOÁ (không lưu bản giải mã) + track nào nạp vào mạch nào.
+    // ---------------------------------------------------------------------------
+    private val lastImportFile: java.io.File
+        get() = java.io.File(getApplication<Application>().filesDir, "timecode_last_import.json")
+    private val lastImportLock = Any()
+
+    private fun saveLastImport(raw: String, ok: List<TimecodeUploadResult>, seconds: Double) {
+        try {
+            val assign = org.json.JSONArray()
+            ok.forEach {
+                assign.put(org.json.JSONObject().put("track", it.trackKey).put("ip", it.deviceIp).put("mac", it.deviceMac))
+            }
+            val o = org.json.JSONObject().put("raw", raw).put("seconds", seconds).put("assign", assign)
+            synchronized(lastImportLock) { lastImportFile.writeText(o.toString(), Charsets.UTF_8) }
+        } catch (e: Exception) {
+            android.util.Log.w("WledViewModel", "saveLastImport failed", e)
+        }
+    }
+
+    /** Mạch vừa được ghi 249 từ nguồn khác (tab Biên Tập) → không ghi lại từ file timecode nữa. */
+    private fun forgetLastImportFor(ip: String, mac: String?) {
+        try {
+            synchronized(lastImportLock) {
+                if (!lastImportFile.exists()) return
+                val o = org.json.JSONObject(lastImportFile.readText(Charsets.UTF_8))
+                val arr = o.optJSONArray("assign") ?: return
+                val kept = org.json.JSONArray()
+                for (i in 0 until arr.length()) {
+                    val a = arr.optJSONObject(i) ?: continue
+                    if (!lastImportEntryMatches(a, ip, mac)) kept.put(a)
+                }
+                o.put("assign", kept)
+                lastImportFile.writeText(o.toString(), Charsets.UTF_8)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("WledViewModel", "forgetLastImportFor failed", e)
+        }
+    }
+
+    private fun lastImportEntryMatches(a: org.json.JSONObject, ip: String, mac: String?): Boolean {
+        val entryMac = normMac(a.optString("mac"))
+        val devMac = normMac(mac)
+        return if (entryMac.isNotEmpty() && devMac.isNotEmpty()) entryMac == devMac else a.optString("ip") == ip
+    }
+
+    /** Ghi lại track của lần nạp gần nhất lên mạch [ip]. Null = mạch không thuộc lần nạp đó. */
+    private suspend fun repairFromLastImport(ip: String, mac: String?, deviceName: String): TimecodeUploadResult? =
+        withContext(Dispatchers.IO) {
+            val stored = try {
+                synchronized(lastImportLock) {
+                    if (!lastImportFile.exists()) null else org.json.JSONObject(lastImportFile.readText(Charsets.UTF_8))
+                }
+            } catch (e: Exception) {
+                null
+            } ?: return@withContext null
+            val arr = stored.optJSONArray("assign") ?: return@withContext null
+            val entry = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                .firstOrNull { lastImportEntryMatches(it, ip, mac) } ?: return@withContext null
+            val file = try {
+                TimecodeFile.parse(TimecodeCrypto.decryptTimecode(stored.optString("raw")))
+            } catch (e: Exception) {
+                return@withContext null
+            }
+            val track = file.tracks.firstOrNull { it.index == entry.optInt("track", -1) } ?: return@withContext null
+            importTrackToDevice(file, track, ip, deviceName, stored.optDouble("seconds", track.endSeconds))
+        }
+
+    // ---------------------------------------------------------------------------
+    // Kiểm tra trước khi Phát: 1 lần mỗi lần mạch online (§5.1)
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Với mỗi mạch online chưa kiểm trong lần kết nối này: playlist [playlistId] phải gọi toàn
+     * preset có thật. Thiếu → ghi lại từ lần nạp timecode gần nhất (nếu mạch thuộc lần nạp đó),
+     * thiếu mỗi 248 → tự ghi lại OFF, còn lại → cảnh báo. Đọc lỗi vẫn tính là "đã thử".
+     */
+    private suspend fun verifyDevicesBeforePlay(playlistId: Int) {
+        val targets = devices.value.filter {
+            it.isOnline && !MockDevice.isMock(it.ipAddress) && it.ipAddress !in verifiedIps
+        }
+        if (targets.isEmpty()) return
+        val notes = withContext(Dispatchers.IO) {
+            targets.map { d -> async { verifyOneDeviceBeforePlay(d, playlistId) } }.awaitAll().filterNotNull()
+        }
+        if (notes.isNotEmpty()) {
+            _timecodeImportState.update { it.copy(resultMessage = notes.joinToString("\n")) }
+        }
+    }
+
+    private suspend fun verifyOneDeviceBeforePlay(d: WledDevice, playlistId: Int): String? {
+        verifiedIps += d.ipAddress
+        return try {
+            val text = fetchPresetsText(d.ipAddress)
+            val presets = parsePresetsText(text)
+            val pmax = PresetSlots.pmaxHint(d.pmax, presets)
+            val ids = TimecodePlanner.playlistIds(presets, playlistId)
+            val missing = if (ids == null) listOf(playlistId) else TimecodePlanner.missingPlaylistRefs(presets, ids, pmax)
+            if (missing.isEmpty()) return null
+
+            log("Kiểm tra trước khi phát: ${d.name} thiếu preset ${missing.joinToString()} cho playlist $playlistId.", "WARN")
+            val repaired = if (playlistId == playlistPresetSlot) repairFromLastImport(d.ipAddress, d.mac, d.name) else null
+            if (repaired != null) {
+                if (repaired.success) {
+                    _devicesTimelines.value = _devicesTimelines.value + (d.id to fetchSingleDeviceTimeline(d, playlistId))
+                    return "♻ ${d.name}: preset bị mất đã được ghi lại từ file timecode."
+                }
+                return "⚠ ${d.name}: thiếu preset ${missing.joinToString()}, ghi lại thất bại — ${repaired.error}"
+            }
+            if (missing == listOf(PresetSlots.OFF)) {
+                backupPresets(d.mac ?: d.ipAddress, text, d.ipAddress)
+                presets.put(PresetSlots.OFF.toString(), TimecodePlanner.timelineOffPreset())
+                uploadPresetsVerified(d.ipAddress, presets, listOf(PresetSlots.OFF))
+                log("Kiểm tra trước khi phát: đã ghi lại TIMELINE_OFF (248) cho ${d.name}.", "INFO")
+                return null
+            }
+            if (ids == null) "⚠ ${d.name}: chưa có playlist $playlistId — hãy nạp timeline cho mạch này."
+            else "⚠ ${d.name}: playlist $playlistId gọi preset không còn trên mạch (${missing.joinToString()}) — hãy nạp lại timeline."
+        } catch (e: Exception) {
+            log("Kiểm tra trước khi phát: không đọc được preset của ${d.name} - ${e.message}", "WARN")
+            null
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Phát đồng loạt: chuẩn bị xong hết rồi mới gửi cùng 1 lúc (§5.4)
+    // ---------------------------------------------------------------------------
+
+    /**
+     * POST /json/state tới mọi IP cùng 1 thời điểm (chờ ở cổng tối đa 2 s). Trả về NGAY khi cổng
+     * mở (lệnh đã được gửi đi) — kết quả từng mạch (thời điểm gửi, ns) nằm trong các Deferred, để
+     * người gọi không phải chờ mạch chậm / mất kết nối mới bật nhạc.
+     */
+    private suspend fun postStateTogether(ips: List<String>, body: String): Map<String, kotlinx.coroutines.Deferred<Result<Long>>> {
+        val targets = ips.distinct()
+        val ready = java.util.concurrent.CountDownLatch(targets.size)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val jobs = targets.associateWith { ip ->
+            viewModelScope.async(Dispatchers.IO) {
+                // Dựng sẵn mọi thứ TRƯỚC cổng.
+                val request = okhttp3.Request.Builder()
+                    .url("http://$ip/json/state")
+                    .post(body.toRequestBody(jsonUtf8))
+                    .build()
+                ready.countDown()
+                gate.await()
+                runCatching {
+                    val sentAt = System.nanoTime()
+                    if (!MockDevice.isMock(ip)) {
+                        playClient.newCall(request).execute().use { r ->
+                            if (!r.isSuccessful) throw Exception("HTTP ${r.code}")
+                        }
+                    }
+                    sentAt
+                }
+            }
+        }
+        withContext(Dispatchers.IO) { ready.await(2, java.util.concurrent.TimeUnit.SECONDS) }
+        gate.complete(Unit)
+        return jobs
+    }
+
+    // ---------------------------------------------------------------------------
+    // Đọc / ghi presets.json an toàn
+    // ---------------------------------------------------------------------------
+
+    private class DeviceIdentity(val mac: String, val pmax: Int)
+
+    /** GET /json/info → MAC chuẩn hoá + pmax (thiếu = 250, không suy từ vid). */
+    private suspend fun fetchDeviceIdentity(ip: String): DeviceIdentity = withContext(Dispatchers.IO) {
+        val text = if (MockDevice.isMock(ip)) {
+            MockDevice.cannedInfoJson()
+        } else {
+            val request = okhttp3.Request.Builder().url("http://$ip/json/info").build()
+            presetFileClient.newCall(request).execute().use { r ->
+                if (!r.isSuccessful) throw Exception("Không đọc được /json/info (HTTP ${r.code})")
+                r.body?.string().orEmpty()
+            }
+        }
+        val info = org.json.JSONObject(text)
+        DeviceIdentity(
+            mac = normMac(info.optString("mac")),
+            pmax = PresetSlots.pmaxOrLegacy(info.optJSONObject("fs")?.optInt("pmax", 0))
+        )
+    }
+
+    /** GET /presets.json → text gốc ("{}" nếu mạch chưa có preset). */
+    private suspend fun fetchPresetsText(ip: String): String = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(ip)) return@withContext MockDevice.cannedPresetsJson()
         val request = okhttp3.Request.Builder().url("http://$ip/presets.json").build()
-        client.newCall(request).execute().use { response ->
+        presetFileClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw Exception("Không đọc được presets.json (HTTP ${response.code})")
             val body = response.body?.string()?.trim()
-            if (body.isNullOrEmpty() || body == "null") org.json.JSONObject() else org.json.JSONObject(body)
+            if (body.isNullOrEmpty() || body == "null") "{}" else body
         }
     }
 
-    /** First free slot in 60..240, skipping reserved slots and existing keys. */
-    private fun findFreeSlot(presets: org.json.JSONObject): Int? {
-        for (slot in timecodeSlotRange) {
-            if (slot in timecodeSkipSlots) continue
-            val key = slot.toString()
-            if (!presets.has(key) || presets.isNull(key)) return slot
-        }
-        return null
-    }
+    private fun parsePresetsText(text: String): org.json.JSONObject =
+        if (text.isBlank() || text == "null") org.json.JSONObject() else org.json.JSONObject(text)
 
-    private fun buildTimelineOffPreset(): org.json.JSONObject = org.json.JSONObject().apply {
-        put("n", "TIMELINE_OFF")
-        val seg = org.json.JSONObject().apply {
-            put("id", 0)
-            put("fx", 0)
-            put("col", org.json.JSONArray().apply {
-                put(org.json.JSONArray().apply { put(0); put(0); put(0) })
-            })
-        }
-        put("seg", org.json.JSONArray().apply { put(seg) })
-    }
+    /** GET /presets.json → JSONObject. Returns an empty object if the device has none. */
+    private suspend fun fetchPresetsJsonObject(ip: String): org.json.JSONObject = parsePresetsText(fetchPresetsText(ip))
 
-    /** Upload one binary file (BMP/GIF) decoded from base64 to the device FS. */
-    private suspend fun uploadBinaryFile(ip: String, path: String, contentB64: String) = withContext(Dispatchers.IO) {
+    /**
+     * Sao lưu presets.json VỪA ĐỌC trước khi ghi đè cả file (giữ 10 bản gần nhất mỗi mạch):
+     * `files/presets_backup/<mac hoặc ip>/presets_<thời điểm>.json`.
+     */
+    private fun backupPresets(deviceKey: String, text: String, ip: String) {
+        if (MockDevice.isMock(ip)) return
         try {
-            val bytes = android.util.Base64.decode(contentB64, android.util.Base64.DEFAULT)
-            val filename = if (path.startsWith("/")) path else "/$path"
-            val mime = if (filename.endsWith(".gif", true)) "image/gif" else "image/bmp"
-            uploadImageBytes(ip, filename, bytes, mime)
+            val safe = deviceKey.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val dir = java.io.File(getApplication<Application>().filesDir, "presets_backup/$safe")
+            dir.mkdirs()
+            val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss_SSS", java.util.Locale.US).format(java.util.Date())
+            java.io.File(dir, "presets_$stamp.json").writeText(text, Charsets.UTF_8)
+            dir.listFiles { f -> f.name.startsWith("presets_") && f.name.endsWith(".json") }
+                ?.sortedByDescending { it.name }
+                ?.drop(10)
+                ?.forEach { it.delete() }
         } catch (e: Exception) {
-            android.util.Log.e("WledViewModel", "File upload exception ($path) for $ip", e)
+            android.util.Log.w("WledViewModel", "backupPresets failed for $deviceKey", e)
         }
+    }
+
+    /**
+     * Upload presets.json dạng gọn (§5.2) rồi ĐỌC LẠI: mọi slot trong [checkSlots] phải là object
+     * khác rỗng (thử 3 lần, cách 0.4 s). Firmware có thể nhận upload mà không lưu → báo lỗi.
+     */
+    private suspend fun uploadPresetsVerified(ip: String, presets: org.json.JSONObject, checkSlots: Collection<Int>) {
+        uploadPresetsJson(ip, PresetJson.presetsJsonText(presets))
+        if (MockDevice.isMock(ip) || checkSlots.isEmpty()) return
+        var missing: List<Int> = checkSlots.toList()
+        for (attempt in 0 until 3) {
+            if (attempt > 0) delay(400)
+            val back = try { fetchPresetsJsonObject(ip) } catch (e: Exception) { null } ?: continue
+            missing = checkSlots.filter { !PresetSlots.isNonEmptyPreset(back.opt(it.toString())) }
+            if (missing.isEmpty()) return
+        }
+        throw Exception("Mạch chưa lưu preset ${missing.joinToString()} sau khi ghi (bộ nhớ đầy hoặc mạch bận) — thử lại.")
+    }
+
+    /** Đường dẫn mọi file trên mạch (chữ thường, có "/" đầu) — kiểm ảnh trước khi ghi preset. */
+    private suspend fun listDeviceFilePaths(ip: String): Set<String> =
+        fetchDeviceFileEntries(ip).map { it.path.lowercase() }.toSet()
+
+    private fun mimeForPath(path: String): String {
+        val p = path.lowercase()
+        return when {
+            p.endsWith(".gif") -> "image/gif"
+            p.endsWith(".bmp") -> "image/bmp"
+            p.endsWith(".png") -> "image/png"
+            p.endsWith(".jpg") || p.endsWith(".jpeg") -> "image/jpeg"
+            else -> "application/octet-stream"
+        }
+    }
+
+    private suspend fun uploadImageWithRetry(ip: String, path: String, bytes: ByteArray) {
+        var lastErr: Exception? = null
+        for (attempt in 0 until 3) {
+            try {
+                uploadImageBytes(ip, path, bytes, mimeForPath(path))
+                return
+            } catch (e: Exception) {
+                lastErr = e
+                delay(500L * (attempt + 1))
+            }
+        }
+        throw Exception("Tải ảnh $path lên mạch thất bại: ${lastErr?.message}")
     }
 
     /**
@@ -2567,25 +2852,21 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     /** Replace the device's presets.json. Throws on failure so callers can report it. */
     private suspend fun uploadPresetsJson(ip: String, jsonContent: String) {
         if (MockDevice.isMock(ip)) { delay(120); return }
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val url = "http://$ip/upload"
+        withContext(Dispatchers.IO) {
             val client = okhttp3.OkHttpClient.Builder()
                 .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                 .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                 .build()
-
             val body = okhttp3.MultipartBody.Builder()
                 .setType(okhttp3.MultipartBody.FORM)
-                .addFormDataPart("data", "/presets.json", jsonContent.toRequestBody("application/json".toMediaTypeOrNull()))
+                .addFormDataPart("data", "/presets.json", jsonContent.toRequestBody(jsonUtf8))
                 .build()
-
-            val request = okhttp3.Request.Builder()
-                .url(url)
-                .post(body)
-                .build()
-
+            val request = okhttp3.Request.Builder().url("http://$ip/upload").post(body).build()
             client.newCall(request).execute().use { response ->
+                if (response.code == 401) {
+                    throw Exception("WLED đang khóa PIN phần /upload, cần mở khóa trước khi ghi preset.")
+                }
                 if (!response.isSuccessful) {
                     throw Exception("Upload thất bại (HTTP ${response.code})")
                 }
@@ -2977,7 +3258,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 while (keys.hasNext()) {
                     val key = keys.next()
                     val pid = key.toIntOrNull() ?: continue
-                    if (pid in systemPresetSlots) continue
+                    if (pid in systemPresetSlots || pid in PresetSlots.RESERVED || pid <= 0) continue
                     val obj = presets.optJSONObject(key) ?: continue
                     if (obj.length() == 0) continue
                     val name = obj.optString("n", "Preset $pid").ifBlank { "Preset $pid" }
@@ -3134,10 +3415,40 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 val clips = _editorClips.value[device.id] ?: continue
                 try {
                     withContext(Dispatchers.IO) {
-                        val presets = fetchPresetsJsonObject(device.ipAddress)
-                        val ok = buildPlaylist249Json(presets, clips, total, loop)
-                        if (!ok) throw Exception("Không có clip hợp lệ")
-                        uploadPresetsJson(device.ipAddress, presets.toString())
+                        val text = fetchPresetsText(device.ipAddress)
+                        val presets = parsePresetsText(text)
+                        val pmax = PresetSlots.pmaxHint(device.pmax, presets)
+                        val entries = clips.map {
+                            TimecodePlanner.PlaylistEntry(
+                                it.presetId, it.startSec.toDouble(), it.durationSec.toDouble(), it.transitionSec.toDouble()
+                            )
+                        }
+                        if (entries.isEmpty()) throw Exception("Không có clip hợp lệ")
+                        val compiled = TimecodePlanner.compilePlaylist(entries, total.toDouble(), loop)
+                        // §5.3: không ghi playlist gọi preset không còn trên mạch (phần đó sẽ không phát gì).
+                        val missing = TimecodePlanner.missingPlaylistRefs(
+                            presets, compiled.ps.filter { it != PresetSlots.OFF }, pmax
+                        )
+                        if (missing.isNotEmpty()) {
+                            val names = clips.filter { it.presetId in missing }.map { it.presetName }.distinct()
+                            throw Exception(
+                                "preset ${missing.joinToString()} không còn trên mạch (${names.joinToString()}) — kéo lại clip từ danh sách preset"
+                            )
+                        }
+                        val written = mutableListOf(PresetSlots.PLAYLIST)
+                        if (PresetSlots.OFF in compiled.ps) {
+                            presets.put(PresetSlots.OFF.toString(), TimecodePlanner.timelineOffPreset())
+                            written += PresetSlots.OFF
+                        }
+                        presets.put(
+                            PresetSlots.PLAYLIST.toString(),
+                            TimecodePlanner.playlistPreset(compiled.playlist, "Timeline Edit")
+                        )
+                        backupPresets(device.mac ?: device.ipAddress, text, device.ipAddress)
+                        uploadPresetsVerified(device.ipAddress, presets, written)
+                        verifiedIps += device.ipAddress
+                        // 249 giờ do tab Biên Tập ghi → không ghi lại từ file timecode cũ nữa.
+                        forgetLastImportFor(device.ipAddress, device.mac)
                     }
                     results += "${device.name}: OK (${clips.size} clip)"
                 } catch (e: Exception) {
@@ -3159,61 +3470,6 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissEditorUpload() {
         if (!_editorUploadState.value.isRunning) _editorUploadState.value = EditorUploadUiState()
-    }
-
-    /** Build playlist 249 (+248 OFF cho gap) từ clip biên tập. Trả false nếu rỗng. */
-    private fun buildPlaylist249Json(
-        presets: org.json.JSONObject,
-        clips: List<TimelineClip>,
-        totalSeconds: Int,
-        loop: Boolean
-    ): Boolean {
-        val psArray = org.json.JSONArray()
-        val durArray = org.json.JSONArray()
-        val transArray = org.json.JSONArray()
-        var lastEnd = 0.0
-        var needsOff = false
-        var clipCount = 0
-        for (clip in clips.sortedBy { it.startSec }) {
-            val start = clip.startSec.toDouble()
-            val duration = clip.durationSec.toDouble()
-            val transition = clip.transitionSec.toDouble()
-            val gap = start - lastEnd
-            if (gap > timecodeGapTolerance) {
-                psArray.put(248)
-                durArray.put(maxOf(1, Math.round(gap * 10).toInt()))
-                transArray.put(0)
-                needsOff = true
-            }
-            psArray.put(clip.presetId)
-            durArray.put(maxOf(1, Math.round(duration * 10).toInt()))
-            transArray.put(maxOf(0, Math.round(transition * 10).toInt()))
-            lastEnd = maxOf(lastEnd, start + duration)
-            clipCount++
-        }
-        if (clipCount == 0) return false
-        val trailing = totalSeconds - lastEnd
-        if (trailing > timecodeGapTolerance) {
-            psArray.put(248)
-            durArray.put(maxOf(1, Math.round(trailing * 10).toInt()))
-            transArray.put(0)
-            needsOff = true
-        }
-        if (needsOff) presets.put("248", buildTimelineOffPreset())
-        val playlist = org.json.JSONObject().apply {
-            put("ps", psArray)
-            put("dur", durArray)
-            put("transition", transArray)
-            put("repeat", if (loop) 0 else 1)
-            put("end", 0)
-            put("r", 0)
-        }
-        presets.put("249", org.json.JSONObject().apply {
-            put("playlist", playlist)
-            put("on", true)
-            put("n", "Timeline Edit")
-        })
-        return true
     }
 }
 
@@ -3271,32 +3527,55 @@ data class ImageUploadUiState(
     val error: String? = null
 )
 
-/** A mock (virtual) device parsed from an imported timecode file. */
-data class TimecodeMockDevice(
-    val id: String,
+/** Một track (mock hoặc mạch thật) của file timecode, hiện ở dialog gán thiết bị. */
+data class TimecodeTrackItem(
+    /** Chỉ số track trong file (khoá gán). */
+    val key: Int,
     val name: String,
-    val clipCount: Int
+    /** IP mạch lúc lưu file, hoặc mock id ("mock:1"). */
+    val sourceIp: String,
+    val isMock: Boolean,
+    /** MAC trong file ("" nếu không có). */
+    val mac: String,
+    val clipCount: Int,
+    val recipeCount: Int,
+    /** Clip chưa ghi xuống mạch lúc lưu file (bake_snapshot). */
+    val pendingBakeCount: Int,
+    /** IP mạch app tự nhận (theo MAC/IP), null = chưa nhận được. */
+    val autoIp: String?,
+    val matchNote: String?
 )
 
-/** Per-device outcome of a timecode upload, shown in the result dialog. */
+/** Kết quả nạp 1 track lên 1 mạch, hiện ở dialog kết quả. */
 data class TimecodeUploadResult(
-    val mockName: String,
+    val trackKey: Int,
+    val trackName: String,
     val deviceName: String,
     val deviceIp: String,
+    val deviceMac: String = "",
     val clipCount: Int,
     val success: Boolean,
-    val error: String? = null
+    val error: String? = null,
+    val details: List<String> = emptyList(),
+    val warnings: List<String> = emptyList()
 )
 
-/** UI state for the timecode import → mock-to-real mapping flow. */
+/** Nhạc của timeline sau khi nạp (§4.7). */
+enum class TimecodeAudioStatus { NONE, ALREADY_SELECTED, AUTO_SELECTED, MISSING }
+
+/** UI state for the timecode import → track-to-device mapping flow. */
 data class TimecodeImportUiState(
     val showDialog: Boolean = false,
-    val mockDevices: List<TimecodeMockDevice> = emptyList(),
+    val tracks: List<TimecodeTrackItem> = emptyList(),
     val isProcessing: Boolean = false,
+    val progressNote: String? = null,
     val resultMessage: String? = null,
     val showResult: Boolean = false,
     val results: List<TimecodeUploadResult> = emptyList(),
-    val totalSeconds: Double = 0.0
+    val totalSeconds: Double = 0.0,
+    /** Tên file nhạc trong timeline (từ audio_rel / audio_path). */
+    val audioFileName: String? = null,
+    val audioStatus: TimecodeAudioStatus = TimecodeAudioStatus.NONE
 )
 
 enum class PresetDeleteAction {
@@ -3315,6 +3594,8 @@ data class DevicePresetStorageStats(
     val systemCapacity: Int = 4,
     val otherUsed: Int = 0,
     val totalPresets: Int = 0,
+    /** ID preset lớn nhất mạch chấp nhận (250 = firmware cũ, tới 1024 trên firmware ≥ 2611090). */
+    val pmax: Int = 250,
     val isLoading: Boolean = false,
     val error: String? = null
 )

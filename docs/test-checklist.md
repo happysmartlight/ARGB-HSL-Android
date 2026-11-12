@@ -41,3 +41,24 @@
 - [ ] Clip mặc định **5 giây** khi mới thả — ổn không?
 - [ ] Nạp 249 đang đặt **lặp vô hạn (loop)** — cần thêm tuỳ chọn chạy 1 lần?
 - [ ] **Transition mặc định = 0** — cần thêm chỉnh transition cho từng clip?
+
+## D. Mạch 2X Pro + file timeline desktop v3.17 (recipe / MAC / pmax 1024)
+
+Đã kiểm 2026-11-12 trên 2 mạch thật (2X Pro `192.168.0.21`, 4X `192.168.0.130`, firmware
+2611103, `pmax` 1024) qua emulator `argb_tablet`, file sinh bằng `timecode_crypto` của desktop:
+
+- [x] Thêm mạch **2X Pro** bằng IP → nhận, không bị xoá khi ping. Thẻ thông tin hiện MAC + "ID preset 1–250, 256–1024".
+- [x] Thống kê Timecode theo `pmax`: 949 slot (60–240 + 256–1024).
+- [x] Dialog gán: track thật tự gán theo MAC; track 4X ghi sai IP trong file → nhận ra "đổi IP → .130"; track mock chờ chọn.
+- [x] Clip có recipe trùng preset sẵn có → dùng lại slot, preset gốc không bị đổi.
+- [x] Clip có `preset_id` trỏ slot đang chứa nội dung KHÁC → ghi slot mới, slot cũ không bị phát.
+- [x] `bake_snapshot` trên track thật được bake; ảnh trong `recipe_files` được tải lên.
+- [x] presets.json sau khi ghi: dạng gọn, `"0":{}` đầu, tên tiếng Việt lưu đúng chữ (không thành mã escape).
+- [x] Xoá 1 preset trên mạch → Refresh → Phát: app tự ghi lại từ file timecode rồi mới phát.
+- [x] Phát 2 mạch: cùng chạy `pl=249`, lệch thời điểm gửi 0.72 ms (log app).
+- [ ] Mạch **firmware cũ** (không có `fs.pmax`) → không bao giờ dùng ID > 250.
+- [ ] Mạch thiếu ảnh mà file không kèm ảnh → báo lỗi clip, không ghi gì.
+- [ ] Nhạc: file nhạc trùng tên trong lịch sử → tự chọn; không có → nút "Chọn nhạc".
+- [ ] Tab Biên Tập: "Nạp vào playlist 249" trên mạch thật (đọc lại xác nhận, chặn preset đã mất).
+- [ ] Cài đè bản cũ trên máy thật đang có thiết bị → danh sách thiết bị còn nguyên (migration 4→5; đã có unit test).
+- [ ] Máy thật (không phải emulator): mDNS tìm thấy 2X Pro.

@@ -104,7 +104,7 @@ import com.example.viewmodel.ImageUploadDeviceResult
 import com.example.viewmodel.EditablePreset
 import com.example.viewmodel.TimelineClip
 import com.example.viewmodel.EditorUploadUiState
-import com.example.viewmodel.TimecodeMockDevice
+import com.example.viewmodel.TimecodeTrackItem
 import com.example.viewmodel.TimecodeImportUiState
 import com.example.viewmodel.TimecodeUploadResult
 import com.example.ui.i18n.LocalAppStrings
@@ -205,14 +205,6 @@ fun DeviceControlSection(
         )
     }
 
-    // Rich, full result summary after the upload completes.
-    if (timecodeImportState.showResult && timecodeImportState.results.isNotEmpty()) {
-        TimecodeResultDialog(
-            state = timecodeImportState,
-            onDismiss = { viewModel.clearTimecodeResult() }
-        )
-    }
-
     PresetDeleteDialog(
         state = presetDeleteState,
         onConfirm = { preview -> viewModel.confirmPresetDeletion(device, preview.action) },
@@ -268,6 +260,21 @@ fun DeviceControlSection(
             }
             viewModel.setCustomAudio(uri, name, durationSec)
         }
+    }
+
+    // Rich, full result summary after the upload completes (đặt sau audioPickerLauncher để nút "Chọn nhạc" dùng được).
+    if (timecodeImportState.showResult && timecodeImportState.results.isNotEmpty()) {
+        TimecodeResultDialog(
+            state = timecodeImportState,
+            onPickAudio = {
+                try {
+                    audioPickerLauncher.launch("audio/*")
+                } catch (e: Exception) {
+                    android.util.Log.e("WledManager", "Error launching picker", e)
+                }
+            },
+            onDismiss = { viewModel.clearTimecodeResult() }
+        )
     }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
@@ -922,6 +929,30 @@ fun DeviceControlSection(
                                 ) {
                                     Text(strings.dcIpAccess, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                                     Text(device.ipAddress, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                }
+                                device.mac?.let { mac ->
+                                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(strings.dcMac, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                        Text(formatMac(mac), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(strings.dcPresetIds, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                    Text(
+                                        PresetSlots.validRangeLabel(PresetSlots.pmaxOrLegacy(device.pmax)),
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
                                 }
 
                                 DeviceInfoDivider()

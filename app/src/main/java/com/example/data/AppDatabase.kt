@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [WledDevice::class, SystemLog::class, TimelineClipEntity::class], version = 4, exportSchema = false)
+@Database(entities = [WledDevice::class, SystemLog::class, TimelineClipEntity::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun wledDao(): WledDao
     abstract fun systemLogDao(): SystemLogDao
@@ -33,13 +33,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // 4→5: thêm cột mac + pmax cho wled_devices (nullable), giữ nguyên thiết bị đã lưu.
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `wled_devices` ADD COLUMN `mac` TEXT")
+                db.execSQL("ALTER TABLE `wled_devices` ADD COLUMN `pmax` INTEGER")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "wled_manager_db"
-                ).addMigrations(MIGRATION_3_4)
+                ).addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                 .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance

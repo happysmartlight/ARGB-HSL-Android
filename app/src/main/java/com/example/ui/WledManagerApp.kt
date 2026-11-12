@@ -104,7 +104,7 @@ import com.example.viewmodel.ImageUploadDeviceResult
 import com.example.viewmodel.EditablePreset
 import com.example.viewmodel.TimelineClip
 import com.example.viewmodel.EditorUploadUiState
-import com.example.viewmodel.TimecodeMockDevice
+import com.example.viewmodel.TimecodeTrackItem
 import com.example.viewmodel.TimecodeImportUiState
 import com.example.viewmodel.TimecodeUploadResult
 import com.example.ui.i18n.LocalAppStrings

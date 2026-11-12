@@ -104,7 +104,7 @@ import com.example.viewmodel.ImageUploadDeviceResult
 import com.example.viewmodel.EditablePreset
 import com.example.viewmodel.TimelineClip
 import com.example.viewmodel.EditorUploadUiState
-import com.example.viewmodel.TimecodeMockDevice
+import com.example.viewmodel.TimecodeTrackItem
 import com.example.viewmodel.TimecodeImportUiState
 import com.example.viewmodel.TimecodeUploadResult
 import com.example.ui.theme.LocalAppDimens
@@ -204,7 +204,7 @@ internal fun PresetCleanupPanel(
                 )
                 PresetDeleteActionButton(
                     title = "XÓA ALL PRESET THUỘC NHÓM PRESET",
-                    subtitle = "Slot 60-240 và playlist 249, bỏ qua slot được giữ",
+                    subtitle = "Slot 60-240, 256+ (mạch firmware mới) và playlist 249, bỏ qua slot được giữ",
                     enabled = !isBusy,
                     onClick = { onAction(PresetDeleteAction.TIMECODE_GROUP) }
                 )
@@ -313,7 +313,7 @@ internal fun BulkPresetCleanupPanel(
                 )
                 PresetDeleteActionButton(
                     title = "XÓA NHÓM PRESET TRÊN TẤT CẢ ONLINE",
-                    subtitle = "Mỗi mạch xóa slot 60-240 và playlist 249",
+                    subtitle = "Mỗi mạch xóa slot 60-240, 256+ và playlist 249",
                     enabled = !isBusy && onlineDevices.isNotEmpty(),
                     onClick = { onAction(PresetDeleteAction.TIMECODE_GROUP) }
                 )
@@ -931,7 +931,7 @@ internal fun presetDeleteTitle(action: PresetDeleteAction): String {
 internal fun presetDeleteSafetyNote(action: PresetDeleteAction): String {
     return when (action) {
         PresetDeleteAction.LOGO_IMAGES -> "Chỉ xóa slot 1-59 và file ảnh được nhóm này tham chiếu nếu không còn preset khác dùng."
-        PresetDeleteAction.TIMECODE_GROUP -> "Xóa slot 60-240 và playlist 249; file ảnh dùng chung sẽ được giữ lại."
+        PresetDeleteAction.TIMECODE_GROUP -> "Xóa slot 60-240, 256+ và playlist 249; file ảnh dùng chung sẽ được giữ lại."
         PresetDeleteAction.ALL_EXCEPT_SYSTEM -> "Xóa mọi preset thường, cho phép xóa playlist 249, nhưng giữ slot 100, 248, 250 và file ảnh còn được slot được giữ tham chiếu."
     }
 }

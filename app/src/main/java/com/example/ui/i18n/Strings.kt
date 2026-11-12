@@ -99,6 +99,8 @@ interface AppStrings {
     val dcFwVersion: String
     val dcVid: String
     val dcIpAccess: String
+    val dcMac: String
+    val dcPresetIds: String
     val dcClientName: String
     val dcLedCount: String
     val dcPwr: String
@@ -382,6 +384,8 @@ val ViStrings: AppStrings = object : AppStrings {
     override val dcFwVersion = "Phiên bản FW:"
     override val dcVid = "Mã định danh (VID):"
     override val dcIpAccess = "Địa chỉ IP truy cập:"
+    override val dcMac = "Địa chỉ MAC:"
+    override val dcPresetIds = "ID preset dùng được:"
     override val dcClientName = "Tên tùy chỉnh client (CN):"
     override val dcLedCount = "Số lượng bóng LED:"
     override val dcPwr = "Dòng tiêu thụ hiện tại (pwr):"
@@ -660,6 +664,8 @@ val EnStrings: AppStrings = object : AppStrings {
     override val dcFwVersion = "FW version:"
     override val dcVid = "Identifier (VID):"
     override val dcIpAccess = "Access IP address:"
+    override val dcMac = "MAC address:"
+    override val dcPresetIds = "Usable preset IDs:"
     override val dcClientName = "Custom client name (CN):"
     override val dcLedCount = "LED count:"
     override val dcPwr = "Current draw (pwr):"

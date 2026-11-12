@@ -14,8 +14,16 @@ object MockDevice {
     /** IP giả nhận diện thiết bị ảo (không phải IP thật nên không bao giờ gọi mạng tới). */
     const val MOCK_IP = "mock.local"
     const val MOCK_NAME = "🧪 MOCK Tablet Sim"
+    // Giả lập mạch 2X Pro firmware mới (pmax 1024) để thử dải ID 256+.
+    const val MOCK_PRODUCT = "ARGB HSL Controller 2X Pro"
+    const val MOCK_MAC = "02000000a001"
+    const val MOCK_PMAX = 1024
 
     fun isMock(ip: String): Boolean = BuildConfig.DEBUG && ip == MOCK_IP
+
+    /** `/json/info` giả lập (mac, fs.pmax) cho luồng import timecode. */
+    fun cannedInfoJson(): String =
+        """{"ver":"mock-0.14","product":"$MOCK_PRODUCT","mac":"$MOCK_MAC","fs":{"u":120,"t":983,"pmax":$MOCK_PMAX}}"""
 
     /** Bản ghi WledDevice ảo để seed vào DB (debug). */
     fun seedDevice(): WledDevice = WledDevice(
@@ -27,9 +35,11 @@ object MockDevice {
         effectId = 0,
         isOnline = true,
         lastSeenTimestamp = System.currentTimeMillis(),
-        product = "ARGB HSL Controller",
+        product = MOCK_PRODUCT,
         fwVersion = "mock-0.14",
-        vid = 240101
+        vid = 240101,
+        mac = MOCK_MAC,
+        pmax = MOCK_PMAX
     )
 
     /** Phản hồi /json giả lập (state + info + effects). */
@@ -44,9 +54,10 @@ object MockDevice {
         info = WledInfo(
             ver = "mock-0.14",
             name = MOCK_NAME,
-            product = "ARGB HSL Controller",
+            product = MOCK_PRODUCT,
             leds = WledLedsInfo(count = 120, fps = 60),
-            fs = WledFilesystemInfo(usedBytes = 120, totalBytes = 983)
+            fs = WledFilesystemInfo(usedBytes = 120, totalBytes = 983, pmax = MOCK_PMAX),
+            mac = MOCK_MAC
         ),
         effects = listOf("Solid", "Blink", "Breathe", "Wipe", "Poi HSL", "Rainbow", "Theater", "Chase"),
         palettes = listOf("Default", "Rainbow", "Party")

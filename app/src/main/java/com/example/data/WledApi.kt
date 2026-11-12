@@ -75,7 +75,9 @@ data class WledLedsInfo(
 // (giữ tên cũ usedBytes/totalBytes để tránh đổi nhiều chỗ; hãy coi như "KB").
 data class WledFilesystemInfo(
     @Json(name = "u") val usedBytes: Long? = null,   // dung lượng đã dùng (KB)
-    @Json(name = "t") val totalBytes: Long? = null   // tổng dung lượng (KB)
+    @Json(name = "t") val totalBytes: Long? = null,  // tổng dung lượng (KB)
+    // ID preset lớn nhất mạch chấp nhận (firmware ≥ 2611090: tới 1024). Thiếu = 250.
+    @Json(name = "pmax") val pmax: Int? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -91,7 +93,8 @@ data class WledInfo(
     @Json(name = "cn") val cn: String? = null,
     @Json(name = "leds") val leds: WledLedsInfo? = null,
     @Json(name = "brand") val brand: String? = null,
-    @Json(name = "fs") val fs: WledFilesystemInfo? = null
+    @Json(name = "fs") val fs: WledFilesystemInfo? = null,
+    @Json(name = "mac") val mac: String? = null
 )
 
 @JsonClass(generateAdapter = true)
