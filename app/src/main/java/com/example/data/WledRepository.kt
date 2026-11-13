@@ -47,12 +47,15 @@ class WledRepository(
                 fwVersion = "mock-0.14",
                 mac = MockDevice.MOCK_MAC,
                 pmax = MockDevice.MOCK_PMAX,
+                vid = MockDevice.MOCK_VID,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
             wledDao.updateDevice(mock)
             return@withContext mock
         }
-        val baseUrl = "http://${device.ipAddress}/json"
+        // /json/si = state + info (~1.8 KB) thay vì /json (~6 KB kèm danh sách hiệu ứng): ping định
+        // kỳ nhẹ hơn, đỡ làm giật LED POI đang quay (desktop: request HTTP làm LED quay bị giật).
+        val baseUrl = "http://${device.ipAddress}/json/si"
         try {
             val response = wledApi.getCompleteApi(baseUrl)
             val state = response.state

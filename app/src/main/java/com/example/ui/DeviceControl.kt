@@ -2753,7 +2753,15 @@ fun DeviceControlSection(
                                     targetDeviceIds = targetIds
                                 )
                             },
-                            onDismissResult = { viewModel.dismissImageUpload() }
+                            onDismissResult = { viewModel.dismissImageUpload() },
+                            poiContent = {
+                                PoiStudioPanel(
+                                    poi = viewModel.poi,
+                                    onOpenPurge = { id ->
+                                        devices.find { it.id == id }?.let { viewModel.openPresetPurgeForDevice(it) }
+                                    }
+                                )
+                            }
                         )
                     }
 

@@ -53,12 +53,32 @@ là mục tiêu chính.
 
 ## Tab "Upload POI & Cờ LED" (tab 3 — index 2)
 
-Biến ảnh → preset hình ảnh, upload đồng loạt mọi mạch online. Spec đầy đủ:
-`docs/poi-preset-workflow.md`.
-- **POI**: ảnh → xoay 90° + resize theo số pixel (15–145) → **BMP 24-bit** → hiệu ứng
-  `Poi HSL`. Chặn nếu ≥ 63KB.
-- **Cờ LED (Matrix)**: ảnh tĩnh/động → resize W×H (≤256×256) → **GIF** (`fx=53`), có
-  **WAIT-PERSIST** (poll `/presets.json`) chống mất preset.
+Biến ảnh → preset hình ảnh. Spec gốc: `docs/poi-preset-workflow.md`.
+
+### Chế độ POI = Công cụ POI (port desktop Tool ARGB HSL `ui/poi_tab.py`, cập nhật 2026-11)
+
+`ui/PoiStudioPanel.kt` (UI) + `viewmodel/PoiStudio.kt` (bộ điều khiển, `WledViewModel.poi`, lazy) +
+`util/PoiTools.kt` (logic thuần, `PoiToolsTest`) + `util/PoiImage.kt` (BMP, toạ độ cực, vẽ vòng quay)
++ `data/PoiGallery.kt` + `data/WledHttp.kt` (HTTP dùng chung, JSON UTF-8 thật).
+
+- **Chỉ `ARGB HSL Controller 2X Pro`, firmware `vid` ≥ 2611050** (`PoiTools.blockReason`). Dòng khác
+  KHÔNG hiện trong danh sách POI (ghi "Ẩn N mạch…"); 2X Pro FW cũ hiện xám kèm lý do. Cờ LED vẫn mọi mạch.
+- Kiểu hình: **Uốn theo vòng** (quét thẳng, lặp N ảnh/vòng) / **Đúng hình** (toạ độ cực `toPolar`,
+  "tâm trống" 0–60%, BMP tên `*_disc`, số ảnh/vòng = 1). Ảnh lấy từ preset trên mạch = BMP cuối → không đổi kiểu.
+- Tốc độ: `ix` = RPM (0 = Auto, 1–255), `c3` = số ảnh/vòng (1–31), `o3` = đảo chiều — preset luôn ghi
+  rõ cả 3. Bấm 1 preset POI trong danh sách → chạy + tải BMP về xem trước + hiện tốc độ; chỉnh tốc độ
+  là gửi `seg` ngay (debounce 250 ms), bấm "Lưu tốc độ vào preset" mới `psave` (đọc lại xác nhận).
+- Độ sáng `bri` 1–101 (pin POI), hiện 0–100%. BMP tối đa 63 KB, **512 KB nếu mạch có PSRAM** (`info.psram` > 0).
+- Gửi: tới các mạch POI đã tick (song song); slot logo 1–59 (ghi tiếp / ghi đè từ ID 1); tên bỏ dấu, không
+  đè BMP của preset khác; `psave` rồi poll `presets.json` tới khi đúng nội dung (3 lần × 5 s).
+- Thư viện mẫu: `assets/poi_gallery/` (306 mẫu, WebP + thumbnail vẽ sẵn bằng đúng code xem trước desktop),
+  sinh lại bằng `tools/build_poi_gallery.py` (chạy bằng venv desktop). Chỉ dùng ảnh desktop đã được phép phân phối.
+- **Không poll mạch** trong tab POI (request HTTP làm LED đang quay bị giật): chỉ đọc khi mở tab / Làm mới /
+  sau khi ghi. Ping định kỳ của app dùng `/json/si` (nhẹ) thay vì `/json`.
+
+### Chế độ Cờ LED (Matrix)
+
+- Ảnh tĩnh/động → resize W×H (≤256×256) → **GIF** (`fx=53`), có **WAIT-PERSIST** (poll `/presets.json`).
 - Slot 1–59 (`logoPresetRange`); 2 chế độ ghi: ghi đè từ ID 1 / ghi tiếp slot trống.
 - Encoder BMP/GIF tự cài trong `util/` (Android không có sẵn) — **không thêm dependency**.
 

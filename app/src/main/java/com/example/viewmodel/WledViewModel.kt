@@ -364,6 +364,11 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private val _onlineDevicePresetStats = MutableStateFlow<Map<Int, DevicePresetStorageStats>>(emptyMap())
     val onlineDevicePresetStats: StateFlow<Map<Int, DevicePresetStorageStats>> = _onlineDevicePresetStats.asStateFlow()
 
+    /** Công cụ POI (chế độ POI của tab "Upload POI & Cờ LED"): chỉ mạch 2X Pro firmware ≥ 2611050. */
+    val poi: PoiStudio by lazy {
+        PoiStudio(getApplication(), viewModelScope, devices, ::log) { refreshOnlineDevicePresetStats() }
+    }
+
     // Trạng thái upload ảnh → preset (tab "Upload POI & Cờ LED").
     private val _imageUploadState = MutableStateFlow(ImageUploadUiState())
     val imageUploadState: StateFlow<ImageUploadUiState> = _imageUploadState.asStateFlow()
@@ -887,6 +892,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             if (outcomes.any { it.deletedPlaylist }) fetchTimelinesForAllDevices(playlistPresetSlot)
+            poi.onPresetsChangedExternally(targets.map { it.id })
 
             _presetPurgeState.value = PresetPurgeUiState(
                 isVisible = true,

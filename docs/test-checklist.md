@@ -74,3 +74,20 @@
 - [ ] Tích "Ảnh thừa" → xoá ảnh không preset nào dùng (đã có unit test, chưa thử trên mạch thật).
 - [ ] Mạch khoá PIN `/edit` → vẫn xoá preset, giữ ảnh, có cảnh báo.
 
+## F. Công cụ POI mới (chỉ 2X Pro, kiểu hình, tốc độ quay, thư viện mẫu)
+
+Đã kiểm 2026-11-13 trên tablet Xiaomi + 2X Pro thật (FW 2611103, PSRAM) + 4X:
+
+- [x] Danh sách POI chỉ có 2X Pro; dòng "Ẩn 1 mạch không phải 2X Pro: ARGB-4X". Cờ LED vẫn có 4X.
+- [x] Số liệu mạch: FW, WiFi, bộ nhớ, nhiệt độ, số ảnh, BMP ≤ 512 KB (PSRAM).
+- [x] Chọn mẫu thư viện (306 mẫu, tìm không dấu "rong" → Rồng…), hàng Chọn nhanh đưa mẫu vừa dùng lên đầu.
+- [x] Xem trước quay ~30 FPS; Uốn theo vòng 3 ảnh/vòng; dung lượng 72×72 = 15.2 KB khớp desktop.
+- [x] Chạm preset 1 → mạch chạy, tải BMP về xem trước, hiện 226 RPM · 4 ảnh/vòng.
+- [x] Chỉnh RPM khi đang chạy → mạch đổi `ix` ngay, preset không đổi khi chưa bấm Lưu.
+- [x] Gửi ảnh → ID trống kế tiếp, `fx 142` + `ix/c3/o3` + `start/stop` đúng; Lưu tốc độ ghi `ix` mới vào preset.
+- [ ] Kiểu Đúng hình trên POI thật đang quay: hình đúng dáng, chỉnh "Tâm trống" cho khớp.
+- [ ] Gửi nhiều ảnh (ghi tiếp / ghi đè từ ID 1) tới 2 cây POI cùng lúc.
+- [ ] 2X Pro firmware cũ (< 2611050) → hiện xám "Cần nâng cấp firmware", không tick được.
+- [ ] Nút Nháy: mạch nháy trắng 3 lần rồi trở lại preset đang chạy.
+- [ ] Màn nhỏ (điện thoại): các phần xếp 1 cột, không vỡ.
+

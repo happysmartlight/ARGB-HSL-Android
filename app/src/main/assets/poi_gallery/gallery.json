@@ -1,0 +1,2179 @@
+{
+ "version": 1,
+ "groups": [
+  {
+   "id": "poi",
+   "name": "Hoạ tiết POI"
+  },
+  {
+   "id": "fire",
+   "name": "Lửa & ánh sáng"
+  },
+  {
+   "id": "animal",
+   "name": "Động vật"
+  },
+  {
+   "id": "fractal",
+   "name": "Fractal & vũ trụ"
+  },
+  {
+   "id": "geometry",
+   "name": "Hình học"
+  },
+  {
+   "id": "nature",
+   "name": "Hoa lá & vui nhộn"
+  }
+ ],
+ "items": [
+  {
+   "file": "src/FADE01-200px.webp",
+   "thumb": "thumb/FADE01-200px.webp",
+   "title": "Chuyển màu 01",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FADE02-200px.webp",
+   "thumb": "thumb/FADE02-200px.webp",
+   "title": "Chuyển màu 02",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FADE03-200px.webp",
+   "thumb": "thumb/FADE03-200px.webp",
+   "title": "Chuyển màu 03",
+   "group": "poi",
+   "shape": "flat",
+   "featured": true
+  },
+  {
+   "file": "src/FADE04-200px.webp",
+   "thumb": "thumb/FADE04-200px.webp",
+   "title": "Chuyển màu 04",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FADE05-200px.webp",
+   "thumb": "thumb/FADE05-200px.webp",
+   "title": "Chuyển màu 05",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FADE06-200px.webp",
+   "thumb": "thumb/FADE06-200px.webp",
+   "title": "Chuyển màu 06",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FADE07-100px.webp",
+   "thumb": "thumb/FADE07-100px.webp",
+   "title": "Chuyển màu 07",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FADE08-75px.webp",
+   "thumb": "thumb/FADE08-75px.webp",
+   "title": "Chuyển màu 08",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/DOTS01-75px.webp",
+   "thumb": "thumb/DOTS01-75px.webp",
+   "title": "Chấm 01",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/DOTS02-72px.webp",
+   "thumb": "thumb/DOTS02-72px.webp",
+   "title": "Chấm 02",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/DOTS03-200px.webp",
+   "thumb": "thumb/DOTS03-200px.webp",
+   "title": "Chấm 03",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/DOTS04-200px.webp",
+   "thumb": "thumb/DOTS04-200px.webp",
+   "title": "Chấm 04",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/DOTS05-37px.webp",
+   "thumb": "thumb/DOTS05-37px.webp",
+   "title": "Chấm 05",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/DOTS06-200px.webp",
+   "thumb": "thumb/DOTS06-200px.webp",
+   "title": "Chấm 06",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/DOTS07-200px.webp",
+   "thumb": "thumb/DOTS07-200px.webp",
+   "title": "Chấm 07",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/DOTS08-200px.webp",
+   "thumb": "thumb/DOTS08-200px.webp",
+   "title": "Chấm 08",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/STROBE01-200px.webp",
+   "thumb": "thumb/STROBE01-200px.webp",
+   "title": "Chớp 01",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/STROBE02-200px.webp",
+   "thumb": "thumb/STROBE02-200px.webp",
+   "title": "Chớp 02",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/STROBE03-200px.webp",
+   "thumb": "thumb/STROBE03-200px.webp",
+   "title": "Chớp 03",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/STROBE04-200px.webp",
+   "thumb": "thumb/STROBE04-200px.webp",
+   "title": "Chớp 04",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/STROBE05-200px.webp",
+   "thumb": "thumb/STROBE05-200px.webp",
+   "title": "Chớp 05",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/STROBE06-96px.webp",
+   "thumb": "thumb/STROBE06-96px.webp",
+   "title": "Chớp 06",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/STROBE07-80px.webp",
+   "thumb": "thumb/STROBE07-80px.webp",
+   "title": "Chớp 07",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/STROBE08-80px.webp",
+   "thumb": "thumb/STROBE08-80px.webp",
+   "title": "Chớp 08",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/PULSE01-200px.webp",
+   "thumb": "thumb/PULSE01-200px.webp",
+   "title": "Nhịp sáng 01",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/PULSE02-200px.webp",
+   "thumb": "thumb/PULSE02-200px.webp",
+   "title": "Nhịp sáng 02",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/PULSE03-200px.webp",
+   "thumb": "thumb/PULSE03-200px.webp",
+   "title": "Nhịp sáng 03",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/PULSE04-200px.webp",
+   "thumb": "thumb/PULSE04-200px.webp",
+   "title": "Nhịp sáng 04",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/PULSE05-200px.webp",
+   "thumb": "thumb/PULSE05-200px.webp",
+   "title": "Nhịp sáng 05",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/PULSE06-200px.webp",
+   "thumb": "thumb/PULSE06-200px.webp",
+   "title": "Nhịp sáng 06",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/PULSE07-200px.webp",
+   "thumb": "thumb/PULSE07-200px.webp",
+   "title": "Nhịp sáng 07",
+   "group": "poi",
+   "shape": "flat",
+   "featured": true
+  },
+  {
+   "file": "src/PULSE08-200px.webp",
+   "thumb": "thumb/PULSE08-200px.webp",
+   "title": "Nhịp sáng 08",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FLASH01-200px.webp",
+   "thumb": "thumb/FLASH01-200px.webp",
+   "title": "Vệt nháy 01",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FLASH02-200px.webp",
+   "thumb": "thumb/FLASH02-200px.webp",
+   "title": "Vệt nháy 02",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FLASH03-200px.webp",
+   "thumb": "thumb/FLASH03-200px.webp",
+   "title": "Vệt nháy 03",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FLASH04-200px.webp",
+   "thumb": "thumb/FLASH04-200px.webp",
+   "title": "Vệt nháy 04",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FLASH06-80px.webp",
+   "thumb": "thumb/FLASH06-80px.webp",
+   "title": "Vệt nháy 06",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FLASH07-200px.webp",
+   "thumb": "thumb/FLASH07-200px.webp",
+   "title": "Vệt nháy 07",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/FLASH08-70px.webp",
+   "thumb": "thumb/FLASH08-70px.webp",
+   "title": "Vệt nháy 08",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-song-neon.webp",
+   "thumb": "thumb/hsl-song-neon.webp",
+   "title": "Sóng neon",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-song-dai-duong.webp",
+   "thumb": "thumb/hsl-song-dai-duong.webp",
+   "title": "Sóng đại dương",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-song-hoang-hon.webp",
+   "thumb": "thumb/hsl-song-hoang-hon.webp",
+   "title": "Sóng hoàng hôn",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-zigzag-cau-vong.webp",
+   "thumb": "thumb/hsl-zigzag-cau-vong.webp",
+   "title": "Zigzag cầu vồng",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-zigzag-nham-thach.webp",
+   "thumb": "thumb/hsl-zigzag-nham-thach.webp",
+   "title": "Zigzag nham thạch",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-zigzag-bang-gia.webp",
+   "thumb": "thumb/hsl-zigzag-bang-gia.webp",
+   "title": "Zigzag băng giá",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-xoan-oc-neon.webp",
+   "thumb": "thumb/hsl-xoan-oc-neon.webp",
+   "title": "Xoắn ốc neon",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-xoan-oc-hoang-kim.webp",
+   "thumb": "thumb/hsl-xoan-oc-hoang-kim.webp",
+   "title": "Xoắn ốc hoàng kim",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-xoan-oc-anh-dao.webp",
+   "thumb": "thumb/hsl-xoan-oc-anh-dao.webp",
+   "title": "Xoắn ốc anh đào",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-xoan-oc-ngoc-bich.webp",
+   "thumb": "thumb/hsl-xoan-oc-ngoc-bich.webp",
+   "title": "Xoắn ốc ngọc bích",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-cham-bi-cau-vong.webp",
+   "thumb": "thumb/hsl-cham-bi-cau-vong.webp",
+   "title": "Chấm bi cầu vồng",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-cham-bi-mua-xuan.webp",
+   "thumb": "thumb/hsl-cham-bi-mua-xuan.webp",
+   "title": "Chấm bi mùa xuân",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-cham-bi-bang-gia.webp",
+   "thumb": "thumb/hsl-cham-bi-bang-gia.webp",
+   "title": "Chấm bi băng giá",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-kim-cuong-neon.webp",
+   "thumb": "thumb/hsl-kim-cuong-neon.webp",
+   "title": "Kim cương neon",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-kim-cuong-tim-mong.webp",
+   "thumb": "thumb/hsl-kim-cuong-tim-mong.webp",
+   "title": "Kim cương tím mộng",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-kim-cuong-hoang-kim.webp",
+   "thumb": "thumb/hsl-kim-cuong-hoang-kim.webp",
+   "title": "Kim cương hoàng kim",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-dan-cheo-hoang-hon.webp",
+   "thumb": "thumb/hsl-dan-cheo-hoang-hon.webp",
+   "title": "Đan chéo hoàng hôn",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-dan-cheo-cuc-quang.webp",
+   "thumb": "thumb/hsl-dan-cheo-cuc-quang.webp",
+   "title": "Đan chéo cực quang",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-dan-cheo-bang-gia.webp",
+   "thumb": "thumb/hsl-dan-cheo-bang-gia.webp",
+   "title": "Đan chéo băng giá",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-vay-rong-ngoc-bich.webp",
+   "thumb": "thumb/hsl-vay-rong-ngoc-bich.webp",
+   "title": "Vảy rồng ngọc bích",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-vay-rong-nham-thach.webp",
+   "thumb": "thumb/hsl-vay-rong-nham-thach.webp",
+   "title": "Vảy rồng nham thạch",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-vay-rong-dai-duong.webp",
+   "thumb": "thumb/hsl-vay-rong-dai-duong.webp",
+   "title": "Vảy rồng đại dương",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-song-nhat-dai-duong.webp",
+   "thumb": "thumb/hsl-song-nhat-dai-duong.webp",
+   "title": "Sóng Nhật đại dương",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-song-nhat-anh-dao.webp",
+   "thumb": "thumb/hsl-song-nhat-anh-dao.webp",
+   "title": "Sóng Nhật anh đào",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-song-nhat-hoang-kim.webp",
+   "thumb": "thumb/hsl-song-nhat-hoang-kim.webp",
+   "title": "Sóng Nhật hoàng kim",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-plasma-neon.webp",
+   "thumb": "thumb/hsl-plasma-neon.webp",
+   "title": "Plasma neon",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-plasma-cuc-quang.webp",
+   "thumb": "thumb/hsl-plasma-cuc-quang.webp",
+   "title": "Plasma cực quang",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-plasma-hoang-hon.webp",
+   "thumb": "thumb/hsl-plasma-hoang-hon.webp",
+   "title": "Plasma hoàng hôn",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-thanh-nhac-cau-vong.webp",
+   "thumb": "thumb/hsl-thanh-nhac-cau-vong.webp",
+   "title": "Thanh nhạc cầu vồng",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-thanh-nhac-cuc-quang.webp",
+   "thumb": "thumb/hsl-thanh-nhac-cuc-quang.webp",
+   "title": "Thanh nhạc cực quang",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-thanh-nhac-ruby.webp",
+   "thumb": "thumb/hsl-thanh-nhac-ruby.webp",
+   "title": "Thanh nhạc hồng ngọc",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-sao-choi-bang-gia.webp",
+   "thumb": "thumb/hsl-sao-choi-bang-gia.webp",
+   "title": "Sao chổi băng giá",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-sao-choi-neon.webp",
+   "thumb": "thumb/hsl-sao-choi-neon.webp",
+   "title": "Sao chổi neon",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-sao-choi-hoang-kim.webp",
+   "thumb": "thumb/hsl-sao-choi-hoang-kim.webp",
+   "title": "Sao chổi hoàng kim",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-vong-tron-neon.webp",
+   "thumb": "thumb/hsl-vong-tron-neon.webp",
+   "title": "Vòng đứt neon",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-vong-tron-ruby.webp",
+   "thumb": "thumb/hsl-vong-tron-ruby.webp",
+   "title": "Vòng đứt hồng ngọc",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-vong-tron-cuc-quang.webp",
+   "thumb": "thumb/hsl-vong-tron-cuc-quang.webp",
+   "title": "Vòng đứt cực quang",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-tia-sang-hoang-kim.webp",
+   "thumb": "thumb/hsl-tia-sang-hoang-kim.webp",
+   "title": "Tia sáng hoàng kim",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-tia-sang-cau-vong.webp",
+   "thumb": "thumb/hsl-tia-sang-cau-vong.webp",
+   "title": "Tia sáng cầu vồng",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-tia-sang-dai-duong.webp",
+   "thumb": "thumb/hsl-tia-sang-dai-duong.webp",
+   "title": "Tia sáng đại dương",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-chuyen-mau-cau-vong.webp",
+   "thumb": "thumb/hsl-chuyen-mau-cau-vong.webp",
+   "title": "Chuyển sắc cầu vồng",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-chuyen-mau-hoang-hon.webp",
+   "thumb": "thumb/hsl-chuyen-mau-hoang-hon.webp",
+   "title": "Chuyển sắc hoàng hôn",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-chuyen-mau-cuc-quang.webp",
+   "thumb": "thumb/hsl-chuyen-mau-cuc-quang.webp",
+   "title": "Chuyển sắc cực quang",
+   "group": "poi",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fire-cards.webp",
+   "thumb": "thumb/fire-cards.webp",
+   "title": "Bài lửa",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/beautiful-fire.webp",
+   "thumb": "thumb/beautiful-fire.webp",
+   "title": "Dải lửa",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/colorful-lines.webp",
+   "thumb": "thumb/colorful-lines.webp",
+   "title": "Dải sáng nhiều màu",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/colored-smoke.webp",
+   "thumb": "thumb/colored-smoke.webp",
+   "title": "Khói màu",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fire-eye.webp",
+   "thumb": "thumb/fire-eye.webp",
+   "title": "Mắt lửa",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/fire-horse.webp",
+   "thumb": "thumb/fire-horse.webp",
+   "title": "Ngựa lửa",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/running-fire-horse.webp",
+   "thumb": "thumb/running-fire-horse.webp",
+   "title": "Ngựa phi",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/phoenix.webp",
+   "thumb": "thumb/phoenix.webp",
+   "title": "Phượng hoàng",
+   "group": "fire",
+   "shape": "disc",
+   "featured": true
+  },
+  {
+   "file": "src/dragon-flame.webp",
+   "thumb": "thumb/dragon-flame.webp",
+   "title": "Rồng lửa",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/flashing-lights.webp",
+   "thumb": "thumb/flashing-lights.webp",
+   "title": "Sét giăng",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/reflected-waves.webp",
+   "thumb": "thumb/reflected-waves.webp",
+   "title": "Sóng phản chiếu",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/purple-lightning.webp",
+   "thumb": "thumb/purple-lightning.webp",
+   "title": "Tia sét tím",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/lightning.webp",
+   "thumb": "thumb/lightning.webp",
+   "title": "Tia sét xanh",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fire-hearts.webp",
+   "thumb": "thumb/fire-hearts.webp",
+   "title": "Tim lửa",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/cosmic-signal.webp",
+   "thumb": "thumb/cosmic-signal.webp",
+   "title": "Tín hiệu vũ trụ",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/colorful-corona.webp",
+   "thumb": "thumb/colorful-corona.webp",
+   "title": "Vành sáng",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fire-lines.webp",
+   "thumb": "thumb/fire-lines.webp",
+   "title": "Vòng lửa",
+   "group": "fire",
+   "shape": "flat",
+   "featured": true
+  },
+  {
+   "file": "src/bright-highlights.webp",
+   "thumb": "thumb/bright-highlights.webp",
+   "title": "Vệt sáng rực",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/blue-lines.webp",
+   "thumb": "thumb/blue-lines.webp",
+   "title": "Vệt sáng xanh",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-lua-nham-thach.webp",
+   "thumb": "thumb/hsl-lua-nham-thach.webp",
+   "title": "Lửa bùng nham thạch",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-lua-lua-xanh.webp",
+   "thumb": "thumb/hsl-lua-lua-xanh.webp",
+   "title": "Lửa bùng lửa xanh",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-lua-tim-mong.webp",
+   "thumb": "thumb/hsl-lua-tim-mong.webp",
+   "title": "Lửa bùng tím mộng",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-set-lua-xanh.webp",
+   "thumb": "thumb/hsl-set-lua-xanh.webp",
+   "title": "Tia sét lửa xanh",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-set-tim-mong.webp",
+   "thumb": "thumb/hsl-set-tim-mong.webp",
+   "title": "Tia sét tím mộng",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-set-hoang-kim.webp",
+   "thumb": "thumb/hsl-set-hoang-kim.webp",
+   "title": "Tia sét hoàng kim",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-cuc-quang-cuc-quang.webp",
+   "thumb": "thumb/hsl-cuc-quang-cuc-quang.webp",
+   "title": "Màn sáng cực quang",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-cuc-quang-ngoc-bich.webp",
+   "thumb": "thumb/hsl-cuc-quang-ngoc-bich.webp",
+   "title": "Màn sáng ngọc bích",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-cuc-quang-anh-dao.webp",
+   "thumb": "thumb/hsl-cuc-quang-anh-dao.webp",
+   "title": "Màn sáng anh đào",
+   "group": "fire",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-mat-troi-nham-thach.webp",
+   "thumb": "thumb/hsl-mat-troi-nham-thach.webp",
+   "title": "Mặt trời nham thạch",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-mat-troi-hoang-kim.webp",
+   "thumb": "thumb/hsl-mat-troi-hoang-kim.webp",
+   "title": "Mặt trời hoàng kim",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-mat-troi-lua-xanh.webp",
+   "thumb": "thumb/hsl-mat-troi-lua-xanh.webp",
+   "title": "Mặt trời lửa xanh",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-cau-lua-nham-thach.webp",
+   "thumb": "thumb/hsl-cau-lua-nham-thach.webp",
+   "title": "Cầu lửa nham thạch",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-cau-lua-lua-xanh.webp",
+   "thumb": "thumb/hsl-cau-lua-lua-xanh.webp",
+   "title": "Cầu lửa lửa xanh",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-vong-lua-nham-thach.webp",
+   "thumb": "thumb/hsl-vong-lua-nham-thach.webp",
+   "title": "Vòng lửa nham thạch",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-vong-lua-lua-xanh.webp",
+   "thumb": "thumb/hsl-vong-lua-lua-xanh.webp",
+   "title": "Vòng lửa lửa xanh",
+   "group": "fire",
+   "shape": "disc"
+  },
+  {
+   "file": "src/purple-leopard.webp",
+   "thumb": "thumb/purple-leopard.webp",
+   "title": "Báo tím",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/blue-tiger.webp",
+   "thumb": "thumb/blue-tiger.webp",
+   "title": "Báo đen xanh",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/leopard.webp",
+   "thumb": "thumb/leopard.webp",
+   "title": "Báo đốm",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/bright-butterfly.webp",
+   "thumb": "thumb/bright-butterfly.webp",
+   "title": "Bướm rực rỡ",
+   "group": "animal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/golden-butterfly.webp",
+   "thumb": "thumb/golden-butterfly.webp",
+   "title": "Bướm vàng",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/blue-fractal-butterfly.webp",
+   "thumb": "thumb/blue-fractal-butterfly.webp",
+   "title": "Bướm xanh",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/stingray.webp",
+   "thumb": "thumb/stingray.webp",
+   "title": "Cá đuối",
+   "group": "animal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/flowers-and-birds.webp",
+   "thumb": "thumb/flowers-and-birds.webp",
+   "title": "Hoa và chim",
+   "group": "animal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/bright-lion.webp",
+   "thumb": "thumb/bright-lion.webp",
+   "title": "Hổ neon",
+   "group": "animal",
+   "shape": "disc",
+   "featured": true
+  },
+  {
+   "file": "src/red-cat.webp",
+   "thumb": "thumb/red-cat.webp",
+   "title": "Mèo đỏ",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/geometric-wolf.webp",
+   "thumb": "thumb/geometric-wolf.webp",
+   "title": "Sói hình học",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/fractal-wolf.webp",
+   "thumb": "thumb/fractal-wolf.webp",
+   "title": "Sói neon",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/lion.webp",
+   "thumb": "thumb/lion.webp",
+   "title": "Sư tử",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/jellyfish.webp",
+   "thumb": "thumb/jellyfish.webp",
+   "title": "Sứa hồng",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/bulk-jellyfish.webp",
+   "thumb": "thumb/bulk-jellyfish.webp",
+   "title": "Sứa lớn",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/beautiful-jellyfish.webp",
+   "thumb": "thumb/beautiful-jellyfish.webp",
+   "title": "Sứa xanh",
+   "group": "animal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fish-flock.webp",
+   "thumb": "thumb/fish-flock.webp",
+   "title": "Đàn cá",
+   "group": "animal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/wedding-doves.webp",
+   "thumb": "thumb/wedding-doves.webp",
+   "title": "Đôi bồ câu",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-buom-hoang-hon.webp",
+   "thumb": "thumb/hsl-buom-hoang-hon.webp",
+   "title": "Bướm hoàng hôn",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-buom-dai-duong.webp",
+   "thumb": "thumb/hsl-buom-dai-duong.webp",
+   "title": "Bướm đại dương",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-buom-ngoc-bich.webp",
+   "thumb": "thumb/hsl-buom-ngoc-bich.webp",
+   "title": "Bướm ngọc bích",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-buom-anh-dao.webp",
+   "thumb": "thumb/hsl-buom-anh-dao.webp",
+   "title": "Bướm anh đào",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-dau-chan-neon.webp",
+   "thumb": "thumb/hsl-dau-chan-neon.webp",
+   "title": "Dấu chân neon",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-dau-chan-anh-dao.webp",
+   "thumb": "thumb/hsl-dau-chan-anh-dao.webp",
+   "title": "Dấu chân anh đào",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-sua-dai-duong.webp",
+   "thumb": "thumb/hsl-sua-dai-duong.webp",
+   "title": "Sứa đại dương",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-sua-tim-mong.webp",
+   "thumb": "thumb/hsl-sua-tim-mong.webp",
+   "title": "Sứa tím mộng",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-sua-anh-dao.webp",
+   "thumb": "thumb/hsl-sua-anh-dao.webp",
+   "title": "Sứa anh đào",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-meo-neon.webp",
+   "thumb": "thumb/hsl-meo-neon.webp",
+   "title": "Mèo neon",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-meo-hoang-kim.webp",
+   "thumb": "thumb/hsl-meo-hoang-kim.webp",
+   "title": "Mèo hoàng kim",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-meo-cuc-quang.webp",
+   "thumb": "thumb/hsl-meo-cuc-quang.webp",
+   "title": "Mèo cực quang",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-ca-koi-nham-thach.webp",
+   "thumb": "thumb/hsl-ca-koi-nham-thach.webp",
+   "title": "Cá chép nham thạch",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-ca-koi-bang-gia.webp",
+   "thumb": "thumb/hsl-ca-koi-bang-gia.webp",
+   "title": "Cá chép băng giá",
+   "group": "animal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/fractal-radiation.webp",
+   "thumb": "thumb/fractal-radiation.webp",
+   "title": "Biển phóng xạ",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/strange-mechanism.webp",
+   "thumb": "thumb/strange-mechanism.webp",
+   "title": "Cỗ máy lạ",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/fractal-flowers.webp",
+   "thumb": "thumb/fractal-flowers.webp",
+   "title": "Dải hoa fractal",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/Fractal-glow.webp",
+   "thumb": "thumb/Fractal-glow.webp",
+   "title": "Fractal rực sáng",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fractal-flower.webp",
+   "thumb": "thumb/fractal-flower.webp",
+   "title": "Hoa fractal",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/water-lilies.webp",
+   "thumb": "thumb/water-lilies.webp",
+   "title": "Hoa súng",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/cosmic-flowers.webp",
+   "thumb": "thumb/cosmic-flowers.webp",
+   "title": "Hoa vũ trụ",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fractal-pattern.webp",
+   "thumb": "thumb/fractal-pattern.webp",
+   "title": "Hoạ tiết fractal",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fractal-diamond.webp",
+   "thumb": "thumb/fractal-diamond.webp",
+   "title": "Kim cương",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/fractal-web.webp",
+   "thumb": "thumb/fractal-web.webp",
+   "title": "Lưới fractal",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/caged-eyes.webp",
+   "thumb": "thumb/caged-eyes.webp",
+   "title": "Mắt trong lồng",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/eye-spy.webp",
+   "thumb": "thumb/eye-spy.webp",
+   "title": "Những con mắt",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fractal-reflection.webp",
+   "thumb": "thumb/fractal-reflection.webp",
+   "title": "Phản chiếu fractal",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/galaxy.webp",
+   "thumb": "thumb/galaxy.webp",
+   "title": "Thiên hà",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fractal-worlds.webp",
+   "thumb": "thumb/fractal-worlds.webp",
+   "title": "Thế giới fractal",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fractal-target.webp",
+   "thumb": "thumb/fractal-target.webp",
+   "title": "Tâm ngắm",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/immersion-into-the-universe.webp",
+   "thumb": "thumb/immersion-into-the-universe.webp",
+   "title": "Vào vũ trụ",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/fractal-way.webp",
+   "thumb": "thumb/fractal-way.webp",
+   "title": "Đường fractal",
+   "group": "fractal",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-julia-a-neon.webp",
+   "thumb": "thumb/hsl-julia-a-neon.webp",
+   "title": "Julia sóng neon",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-julia-a-hoang-hon.webp",
+   "thumb": "thumb/hsl-julia-a-hoang-hon.webp",
+   "title": "Julia sóng hoàng hôn",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-julia-b-dai-duong.webp",
+   "thumb": "thumb/hsl-julia-b-dai-duong.webp",
+   "title": "Julia xoáy đại dương",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-julia-b-nham-thach.webp",
+   "thumb": "thumb/hsl-julia-b-nham-thach.webp",
+   "title": "Julia xoáy nham thạch",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-julia-c-ngoc-bich.webp",
+   "thumb": "thumb/hsl-julia-c-ngoc-bich.webp",
+   "title": "Julia tán lá ngọc bích",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-julia-c-tim-mong.webp",
+   "thumb": "thumb/hsl-julia-c-tim-mong.webp",
+   "title": "Julia tán lá tím mộng",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-julia-d-cuc-quang.webp",
+   "thumb": "thumb/hsl-julia-d-cuc-quang.webp",
+   "title": "Julia bông cực quang",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-julia-d-anh-dao.webp",
+   "thumb": "thumb/hsl-julia-d-anh-dao.webp",
+   "title": "Julia bông anh đào",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-julia-e-hoang-kim.webp",
+   "thumb": "thumb/hsl-julia-e-hoang-kim.webp",
+   "title": "Julia sợi hoàng kim",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-julia-e-bang-gia.webp",
+   "thumb": "thumb/hsl-julia-e-bang-gia.webp",
+   "title": "Julia sợi băng giá",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-ca-ngua-dai-duong.webp",
+   "thumb": "thumb/hsl-ca-ngua-dai-duong.webp",
+   "title": "Cá ngựa đại dương",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-ca-ngua-hoang-kim.webp",
+   "thumb": "thumb/hsl-ca-ngua-hoang-kim.webp",
+   "title": "Cá ngựa hoàng kim",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-xoay-sau-tim-mong.webp",
+   "thumb": "thumb/hsl-xoay-sau-tim-mong.webp",
+   "title": "Xoáy sâu tím mộng",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-xoay-sau-cau-vong.webp",
+   "thumb": "thumb/hsl-xoay-sau-cau-vong.webp",
+   "title": "Xoáy sâu cầu vồng",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-soi-toc-cuc-quang.webp",
+   "thumb": "thumb/hsl-soi-toc-cuc-quang.webp",
+   "title": "Sợi tóc cực quang",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-soi-toc-ruby.webp",
+   "thumb": "thumb/hsl-soi-toc-ruby.webp",
+   "title": "Sợi tóc hồng ngọc",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-newton-neon.webp",
+   "thumb": "thumb/hsl-newton-neon.webp",
+   "title": "Newton neon",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-newton-cau-vong.webp",
+   "thumb": "thumb/hsl-newton-cau-vong.webp",
+   "title": "Newton cầu vồng",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-thien-ha-hoang-hon.webp",
+   "thumb": "thumb/hsl-thien-ha-hoang-hon.webp",
+   "title": "Thiên hà hoàng hôn",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-thien-ha-lua-xanh.webp",
+   "thumb": "thumb/hsl-thien-ha-lua-xanh.webp",
+   "title": "Thiên hà lửa xanh",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-thien-ha-cuc-quang.webp",
+   "thumb": "thumb/hsl-thien-ha-cuc-quang.webp",
+   "title": "Thiên hà cực quang",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-tinh-van-tim-mong.webp",
+   "thumb": "thumb/hsl-tinh-van-tim-mong.webp",
+   "title": "Tinh vân tím mộng",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-tinh-van-dai-duong.webp",
+   "thumb": "thumb/hsl-tinh-van-dai-duong.webp",
+   "title": "Tinh vân đại dương",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hanh-tinh-hoang-kim.webp",
+   "thumb": "thumb/hsl-hanh-tinh-hoang-kim.webp",
+   "title": "Hành tinh hoàng kim",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hanh-tinh-dai-duong.webp",
+   "thumb": "thumb/hsl-hanh-tinh-dai-duong.webp",
+   "title": "Hành tinh đại dương",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hanh-tinh-ruby.webp",
+   "thumb": "thumb/hsl-hanh-tinh-ruby.webp",
+   "title": "Hành tinh hồng ngọc",
+   "group": "fractal",
+   "shape": "disc"
+  },
+  {
+   "file": "src/rainbow-bubbles.webp",
+   "thumb": "thumb/rainbow-bubbles.webp",
+   "title": "Bong bóng cầu vồng",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/rainbow-chessboard.webp",
+   "thumb": "thumb/rainbow-chessboard.webp",
+   "title": "Bàn cờ cầu vồng",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/gears.webp",
+   "thumb": "thumb/gears.webp",
+   "title": "Bánh răng",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/colored-jelly-balls.webp",
+   "thumb": "thumb/colored-jelly-balls.webp",
+   "title": "Bóng thạch",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/dot-line-dot-line.webp",
+   "thumb": "thumb/dot-line-dot-line.webp",
+   "title": "Chấm gạch",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/ornament.webp",
+   "thumb": "thumb/ornament.webp",
+   "title": "Hoa văn",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/stippling-geometry.webp",
+   "thumb": "thumb/stippling-geometry.webp",
+   "title": "Hoa văn chấm",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/stippling-geometry-green-purple.webp",
+   "thumb": "thumb/stippling-geometry-green-purple.webp",
+   "title": "Hoa văn chấm xanh tím",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/morocco.webp",
+   "thumb": "thumb/morocco.webp",
+   "title": "Hoa văn Ma-rốc",
+   "group": "geometry",
+   "shape": "disc",
+   "featured": true
+  },
+  {
+   "file": "src/rainbow-geometry.webp",
+   "thumb": "thumb/rainbow-geometry.webp",
+   "title": "Hình học cầu vồng",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/axel-graphic-visual-74.webp",
+   "thumb": "thumb/axel-graphic-visual-74.webp",
+   "title": "Khối điểm ảnh",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/just-bright-colors.webp",
+   "thumb": "thumb/just-bright-colors.webp",
+   "title": "Mảng màu",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/purpletriangles.webp",
+   "thumb": "thumb/purpletriangles.webp",
+   "title": "Tam giác tím",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/geometric-hearts.webp",
+   "thumb": "thumb/geometric-hearts.webp",
+   "title": "Tim hình học",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/decorated-circles.webp",
+   "thumb": "thumb/decorated-circles.webp",
+   "title": "Vòng tròn trang trí",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/rainbow-spiral.webp",
+   "thumb": "thumb/rainbow-spiral.webp",
+   "title": "Xoắn cầu vồng",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/rainbow-spiral-up.webp",
+   "thumb": "thumb/rainbow-spiral-up.webp",
+   "title": "Xoắn cầu vồng nghiêng",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/orange-dneh.webp",
+   "thumb": "thumb/orange-dneh.webp",
+   "title": "Xoắn kép cam",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/blue-dneh.webp",
+   "thumb": "thumb/blue-dneh.webp",
+   "title": "Xoắn kép xanh",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/square-spiral.webp",
+   "thumb": "thumb/square-spiral.webp",
+   "title": "Xoắn vuông",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/drawn-cube.webp",
+   "thumb": "thumb/drawn-cube.webp",
+   "title": "Xúc xắc neon",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/acid-zigzag.webp",
+   "thumb": "thumb/acid-zigzag.webp",
+   "title": "Zigzag rực",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/yin-yang.webp",
+   "thumb": "thumb/yin-yang.webp",
+   "title": "Âm dương",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/rectangles.webp",
+   "thumb": "thumb/rectangles.webp",
+   "title": "Ô chữ nhật",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/square-patterns.webp",
+   "thumb": "thumb/square-patterns.webp",
+   "title": "Ô vuông",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/rainbow-square-patterns.webp",
+   "thumb": "thumb/rainbow-square-patterns.webp",
+   "title": "Ô vuông cầu vồng",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/red-square-patterns.webp",
+   "thumb": "thumb/red-square-patterns.webp",
+   "title": "Ô vuông đỏ",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/multi-colored-stones.webp",
+   "thumb": "thumb/multi-colored-stones.webp",
+   "title": "Đá nhiều màu",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-mandala-hoang-hon.webp",
+   "thumb": "thumb/hsl-mandala-hoang-hon.webp",
+   "title": "Mandala hoàng hôn",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-mandala-dai-duong.webp",
+   "thumb": "thumb/hsl-mandala-dai-duong.webp",
+   "title": "Mandala đại dương",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-mandala-neon.webp",
+   "thumb": "thumb/hsl-mandala-neon.webp",
+   "title": "Mandala neon",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-mandala-anh-dao.webp",
+   "thumb": "thumb/hsl-mandala-anh-dao.webp",
+   "title": "Mandala anh đào",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-mandala-hoang-kim.webp",
+   "thumb": "thumb/hsl-mandala-hoang-kim.webp",
+   "title": "Mandala hoàng kim",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-mandala-cuc-quang.webp",
+   "thumb": "thumb/hsl-mandala-cuc-quang.webp",
+   "title": "Mandala cực quang",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-kinh-van-hoa-cau-vong.webp",
+   "thumb": "thumb/hsl-kinh-van-hoa-cau-vong.webp",
+   "title": "Kính vạn hoa cầu vồng",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-kinh-van-hoa-neon.webp",
+   "thumb": "thumb/hsl-kinh-van-hoa-neon.webp",
+   "title": "Kính vạn hoa neon",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-kinh-van-hoa-nham-thach.webp",
+   "thumb": "thumb/hsl-kinh-van-hoa-nham-thach.webp",
+   "title": "Kính vạn hoa nham thạch",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-kinh-van-hoa-bang-gia.webp",
+   "thumb": "thumb/hsl-kinh-van-hoa-bang-gia.webp",
+   "title": "Kính vạn hoa băng giá",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-spiro-neon.webp",
+   "thumb": "thumb/hsl-spiro-neon.webp",
+   "title": "Hoa văn spiro neon",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-spiro-hoang-kim.webp",
+   "thumb": "thumb/hsl-spiro-hoang-kim.webp",
+   "title": "Hoa văn spiro hoàng kim",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-spiro-cuc-quang.webp",
+   "thumb": "thumb/hsl-spiro-cuc-quang.webp",
+   "title": "Hoa văn spiro cực quang",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-ky-ha-cau-vong.webp",
+   "thumb": "thumb/hsl-hoa-ky-ha-cau-vong.webp",
+   "title": "Hoa kỷ hà cầu vồng",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-ky-ha-anh-dao.webp",
+   "thumb": "thumb/hsl-hoa-ky-ha-anh-dao.webp",
+   "title": "Hoa kỷ hà anh đào",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-su-song-neon.webp",
+   "thumb": "thumb/hsl-hoa-su-song-neon.webp",
+   "title": "Vòng tròn đan neon",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-su-song-hoang-kim.webp",
+   "thumb": "thumb/hsl-hoa-su-song-hoang-kim.webp",
+   "title": "Vòng tròn đan hoàng kim",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-su-song-lua-xanh.webp",
+   "thumb": "thumb/hsl-hoa-su-song-lua-xanh.webp",
+   "title": "Vòng tròn đan lửa xanh",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-sao-da-giac-neon.webp",
+   "thumb": "thumb/hsl-sao-da-giac-neon.webp",
+   "title": "Sao đa giác neon",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-sao-da-giac-bang-gia.webp",
+   "thumb": "thumb/hsl-sao-da-giac-bang-gia.webp",
+   "title": "Sao đa giác băng giá",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-sao-da-giac-ruby.webp",
+   "thumb": "thumb/hsl-sao-da-giac-ruby.webp",
+   "title": "Sao đa giác hồng ngọc",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-loc-xoay-cau-vong.webp",
+   "thumb": "thumb/hsl-loc-xoay-cau-vong.webp",
+   "title": "Lốc xoáy cầu vồng",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-loc-xoay-tim-mong.webp",
+   "thumb": "thumb/hsl-loc-xoay-tim-mong.webp",
+   "title": "Lốc xoáy tím mộng",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-loc-xoay-dai-duong.webp",
+   "thumb": "thumb/hsl-loc-xoay-dai-duong.webp",
+   "title": "Lốc xoáy đại dương",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-la-ban-hoang-kim.webp",
+   "thumb": "thumb/hsl-la-ban-hoang-kim.webp",
+   "title": "La bàn hoàng kim",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-la-ban-bang-gia.webp",
+   "thumb": "thumb/hsl-la-ban-bang-gia.webp",
+   "title": "La bàn băng giá",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-la-ban-ruby.webp",
+   "thumb": "thumb/hsl-la-ban-ruby.webp",
+   "title": "La bàn hồng ngọc",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-duong-ham-neon.webp",
+   "thumb": "thumb/hsl-duong-ham-neon.webp",
+   "title": "Đường hầm neon",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-duong-ham-cuc-quang.webp",
+   "thumb": "thumb/hsl-duong-ham-cuc-quang.webp",
+   "title": "Đường hầm cực quang",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-duong-ham-nham-thach.webp",
+   "thumb": "thumb/hsl-duong-ham-nham-thach.webp",
+   "title": "Đường hầm nham thạch",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-kinh-mau-cau-vong.webp",
+   "thumb": "thumb/hsl-kinh-mau-cau-vong.webp",
+   "title": "Kính màu cầu vồng",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-kinh-mau-dai-duong.webp",
+   "thumb": "thumb/hsl-kinh-mau-dai-duong.webp",
+   "title": "Kính màu đại dương",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-kinh-mau-hoang-hon.webp",
+   "thumb": "thumb/hsl-kinh-mau-hoang-hon.webp",
+   "title": "Kính màu hoàng hôn",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-nguyen-tu-lua-xanh.webp",
+   "thumb": "thumb/hsl-nguyen-tu-lua-xanh.webp",
+   "title": "Nguyên tử lửa xanh",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-nguyen-tu-neon.webp",
+   "thumb": "thumb/hsl-nguyen-tu-neon.webp",
+   "title": "Nguyên tử neon",
+   "group": "geometry",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-to-ong-hoang-kim.webp",
+   "thumb": "thumb/hsl-to-ong-hoang-kim.webp",
+   "title": "Tổ ong hoàng kim",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-to-ong-cuc-quang.webp",
+   "thumb": "thumb/hsl-to-ong-cuc-quang.webp",
+   "title": "Tổ ong cực quang",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-hoi-van-hoang-kim.webp",
+   "thumb": "thumb/hsl-hoi-van-hoang-kim.webp",
+   "title": "Hồi văn hoàng kim",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-hoi-van-bang-gia.webp",
+   "thumb": "thumb/hsl-hoi-van-bang-gia.webp",
+   "title": "Hồi văn băng giá",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-mach-dien-ngoc-bich.webp",
+   "thumb": "thumb/hsl-mach-dien-ngoc-bich.webp",
+   "title": "Mạch điện ngọc bích",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-mach-dien-lua-xanh.webp",
+   "thumb": "thumb/hsl-mach-dien-lua-xanh.webp",
+   "title": "Mạch điện lửa xanh",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-xoan-kep-neon.webp",
+   "thumb": "thumb/hsl-xoan-kep-neon.webp",
+   "title": "Xoắn kép neon",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-ao-giac-neon.webp",
+   "thumb": "thumb/hsl-ao-giac-neon.webp",
+   "title": "Ảo giác neon",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-ao-giac-ruby.webp",
+   "thumb": "thumb/hsl-ao-giac-ruby.webp",
+   "title": "Ảo giác hồng ngọc",
+   "group": "geometry",
+   "shape": "flat"
+  },
+  {
+   "file": "src/halloween-pumpkin.webp",
+   "thumb": "thumb/halloween-pumpkin.webp",
+   "title": "Bí ngô Halloween",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/balloons.webp",
+   "thumb": "thumb/balloons.webp",
+   "title": "Bóng bay",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/my-favourite-flower.webp",
+   "thumb": "thumb/my-favourite-flower.webp",
+   "title": "Bông hoa",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/snowflakes.webp",
+   "thumb": "thumb/snowflakes.webp",
+   "title": "Bông tuyết",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/pink-snowflake.webp",
+   "thumb": "thumb/pink-snowflake.webp",
+   "title": "Bông tuyết hồng",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/world-map.webp",
+   "thumb": "thumb/world-map.webp",
+   "title": "Bản đồ thế giới",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/map.webp",
+   "thumb": "thumb/map.webp",
+   "title": "Bản đồ thế giới xanh",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/coctails.webp",
+   "thumb": "thumb/coctails.webp",
+   "title": "Cocktail",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/handprint.webp",
+   "thumb": "thumb/handprint.webp",
+   "title": "Dấu tay",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/orange-flowers.webp",
+   "thumb": "thumb/orange-flowers.webp",
+   "title": "Hoa cam",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/colorful-flowers.webp",
+   "thumb": "thumb/colorful-flowers.webp",
+   "title": "Hoa sắc màu",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/canadian-eh.webp",
+   "thumb": "thumb/canadian-eh.webp",
+   "title": "Lá phong",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/colorful-brush-strokes.webp",
+   "thumb": "thumb/colorful-brush-strokes.webp",
+   "title": "Nét cọ",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/spray.webp",
+   "thumb": "thumb/spray.webp",
+   "title": "Sơn bắn",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/popart-heart.webp",
+   "thumb": "thumb/popart-heart.webp",
+   "title": "Trái tim pop-art",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-day-leo-ngoc-bich.webp",
+   "thumb": "thumb/hsl-day-leo-ngoc-bich.webp",
+   "title": "Dây leo ngọc bích",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-day-leo-mua-xuan.webp",
+   "thumb": "thumb/hsl-day-leo-mua-xuan.webp",
+   "title": "Dây leo mùa xuân",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-bong-bong-dai-duong.webp",
+   "thumb": "thumb/hsl-bong-bong-dai-duong.webp",
+   "title": "Bong bóng đại dương",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-bong-bong-mua-xuan.webp",
+   "thumb": "thumb/hsl-bong-bong-mua-xuan.webp",
+   "title": "Bong bóng mùa xuân",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-sao-troi-bang-gia.webp",
+   "thumb": "thumb/hsl-sao-troi-bang-gia.webp",
+   "title": "Sao trời băng giá",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-sao-troi-hoang-kim.webp",
+   "thumb": "thumb/hsl-sao-troi-hoang-kim.webp",
+   "title": "Sao trời hoàng kim",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-sao-troi-neon.webp",
+   "thumb": "thumb/hsl-sao-troi-neon.webp",
+   "title": "Sao trời neon",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-tim-xep-ruby.webp",
+   "thumb": "thumb/hsl-tim-xep-ruby.webp",
+   "title": "Tim xếp hồng ngọc",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-tim-xep-anh-dao.webp",
+   "thumb": "thumb/hsl-tim-xep-anh-dao.webp",
+   "title": "Tim xếp anh đào",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-sao-xep-hoang-kim.webp",
+   "thumb": "thumb/hsl-sao-xep-hoang-kim.webp",
+   "title": "Sao xếp hoàng kim",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-sao-xep-neon.webp",
+   "thumb": "thumb/hsl-sao-xep-neon.webp",
+   "title": "Sao xếp neon",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-co-ba-la-ngoc-bich.webp",
+   "thumb": "thumb/hsl-co-ba-la-ngoc-bich.webp",
+   "title": "Cỏ ba lá ngọc bích",
+   "group": "nature",
+   "shape": "flat"
+  },
+  {
+   "file": "src/hsl-hoa-sen-anh-dao.webp",
+   "thumb": "thumb/hsl-hoa-sen-anh-dao.webp",
+   "title": "Hoa sen anh đào",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-sen-tim-mong.webp",
+   "thumb": "thumb/hsl-hoa-sen-tim-mong.webp",
+   "title": "Hoa sen tím mộng",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-sen-hoang-kim.webp",
+   "thumb": "thumb/hsl-hoa-sen-hoang-kim.webp",
+   "title": "Hoa sen hoàng kim",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-bong-tuyet-bang-gia.webp",
+   "thumb": "thumb/hsl-bong-tuyet-bang-gia.webp",
+   "title": "Bông tuyết băng giá",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-bong-tuyet-lua-xanh.webp",
+   "thumb": "thumb/hsl-bong-tuyet-lua-xanh.webp",
+   "title": "Bông tuyết lửa xanh",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-bong-tuyet-tim-mong.webp",
+   "thumb": "thumb/hsl-bong-tuyet-tim-mong.webp",
+   "title": "Bông tuyết tím mộng",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-huong-duong-hoang-kim.webp",
+   "thumb": "thumb/hsl-huong-duong-hoang-kim.webp",
+   "title": "Hạt hướng dương hoàng kim",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-huong-duong-hoang-hon.webp",
+   "thumb": "thumb/hsl-huong-duong-hoang-hon.webp",
+   "title": "Hạt hướng dương hoàng hôn",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-huong-duong-ngoc-bich.webp",
+   "thumb": "thumb/hsl-huong-duong-ngoc-bich.webp",
+   "title": "Hạt hướng dương ngọc bích",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-5-canh-anh-dao.webp",
+   "thumb": "thumb/hsl-hoa-5-canh-anh-dao.webp",
+   "title": "Hoa năm cánh anh đào",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-5-canh-hoang-kim.webp",
+   "thumb": "thumb/hsl-hoa-5-canh-hoang-kim.webp",
+   "title": "Hoa năm cánh hoàng kim",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-hoa-5-canh-bang-gia.webp",
+   "thumb": "thumb/hsl-hoa-5-canh-bang-gia.webp",
+   "title": "Hoa năm cánh băng giá",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-mang-nhen-bang-gia.webp",
+   "thumb": "thumb/hsl-mang-nhen-bang-gia.webp",
+   "title": "Mạng nhện băng giá",
+   "group": "nature",
+   "shape": "disc"
+  },
+  {
+   "file": "src/hsl-mang-nhen-neon.webp",
+   "thumb": "thumb/hsl-mang-nhen-neon.webp",
+   "title": "Mạng nhện neon",
+   "group": "nature",
+   "shape": "disc"
+  }
+ ]
+}

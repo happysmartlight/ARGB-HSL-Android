@@ -134,7 +134,9 @@ internal fun ImageUploadTab(
     onToggleDevice: (Int) -> Unit,
     uploadState: ImageUploadUiState,
     onUpload: () -> Unit,
-    onDismissResult: () -> Unit
+    onDismissResult: () -> Unit,
+    /** Chế độ POI: Công cụ POI đầy đủ (chỉ mạch 2X Pro, kiểu hình, tốc độ quay, thư viện mẫu). */
+    poiContent: @Composable () -> Unit
 ) {
     val strings = LocalAppStrings.current
     val dimens = LocalAppDimens.current
@@ -192,7 +194,12 @@ internal fun ImageUploadTab(
             )
         }
 
-        // ---- Chọn ảnh ----
+        if (mode == ImageUploadMode.POI) {
+            poiContent()
+            return@Column
+        }
+
+        // ---- Chọn ảnh (Cờ LED) ----
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),

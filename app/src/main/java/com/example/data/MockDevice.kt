@@ -21,6 +21,18 @@ object MockDevice {
 
     fun isMock(ip: String): Boolean = BuildConfig.DEBUG && ip == MOCK_IP
 
+    /** Build firmware giả lập: đủ mới cho POI (≥ 2611050) để thử tab POI trên emulator. */
+    const val MOCK_VID = 2611103
+
+    /** `/json` đầy đủ giả lập (state + info + effects) cho tab POI. */
+    fun cannedFullJson(): org.json.JSONObject = org.json.JSONObject(
+        """{"state":{"on":true,"bri":51,"ps":-1,"pl":-1,"seg":[{"id":0,"fx":0,"col":[[0,200,255]]}]},
+           "info":{"ver":"mock-0.14","vid":$MOCK_VID,"name":"$MOCK_NAME","product":"$MOCK_PRODUCT","mac":"$MOCK_MAC",
+                   "psram":8000000,"wifi":{"signal":88},"fs":{"u":120,"t":983,"pmax":$MOCK_PMAX},
+                   "sensor":{"Nhiệt độ":[41.5,"°C"]},"leds":{"count":72}},
+           "effects":["Solid","Blink","Breathe","Wipe","Poi HSL","Rainbow"]}"""
+    )
+
     /** `/json/info` giả lập (mac, fs.pmax) cho luồng import timecode. */
     fun cannedInfoJson(): String =
         """{"ver":"mock-0.14","product":"$MOCK_PRODUCT","mac":"$MOCK_MAC","fs":{"u":120,"t":983,"pmax":$MOCK_PMAX}}"""
@@ -37,7 +49,7 @@ object MockDevice {
         lastSeenTimestamp = System.currentTimeMillis(),
         product = MOCK_PRODUCT,
         fwVersion = "mock-0.14",
-        vid = 240101,
+        vid = MOCK_VID,
         mac = MOCK_MAC,
         pmax = MOCK_PMAX
     )
