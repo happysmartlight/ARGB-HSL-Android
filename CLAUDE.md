@@ -98,8 +98,10 @@ thật (vd chạy emulator).
 - Boot: `emulator -avd argb_tablet`; cài: `adb install -r <apk>`; mở:
   `adb shell monkey -p com.happysmartlight.argb -c android.intent.category.LAUNCHER 1`.
 - Emulator tới được mạch thật trong LAN (thêm thiết bị bằng IP; mDNS không chạy trong emulator).
-  Git Bash: đặt `MSYS_NO_PATHCONV=1` cho lệnh `adb ... /sdcard/...`; có máy thật cắm USB thì dùng
-  `adb -s emulator-5554`.
+  Git Bash: đặt `MSYS_NO_PATHCONV=1` cho lệnh `adb ... /sdcard/...` (nhưng KHÔNG đặt khi chạy
+  `gradlew.bat`: `JAVA_HOME` dạng `/c/...` sẽ không được đổi → build lỗi im lặng).
+- Máy thật để debug nhanh: tablet Xiaomi `25040RP0AG` (adb serial `dahqey796pmf5tk7`, 2560×1600
+  ngang). Cài: `adb -s dahqey796pmf5tk7 install -r -t app-debug.apk` (giữ dữ liệu app).
 - `applicationId = com.happysmartlight.argb`, activity `com.example.MainActivity`.
 
 ## Checklist test trên thiết bị thật
@@ -116,6 +118,18 @@ timeline editor, migration DB…).
 - Firmware ≥ 2611090 (2X Pro / 4X): preset ID tới `fs.pmax` (1024). Thiếu `pmax` = 250, KHÔNG suy
   từ `vid`. **Không bao giờ** ghi/xoá/tham chiếu 251–255; không `pdel` 250. Nguồn sự thật:
   `PresetSlots` (logo 1–59, timecode 60–240 rồi 256..pmax, hệ thống 100/248/249/250).
+
+## Dọn preset: 1 nút "Xóa preset + ảnh" (tab Đồng Loạt ALL + tab Cấu Hình Mạch)
+
+Đồng bộ desktop v3.14+. ALL = mọi mạch online, Cấu Hình Mạch = mạch đang chọn
+(`openPresetPurgeForOnlineDevices` / `openPresetPurgeForDevice` → `PresetPurgeDialog`).
+
+- Dialog liệt kê preset gộp theo ID (nhóm Logo 1–59 / Timecode 60–240, 256+ / Playlist 249 /
+  Khác), chip chọn nhanh theo nhóm, mục "Ảnh thừa" (ảnh không preset nào dùng), xác nhận 2 bước.
+- Mỗi mạch (song song): đọc lại → sao lưu presets.json → `pdel` → đọc lại xác nhận → mới xoá ảnh
+  mà CHỈ preset đã xoá thật dùng (ảnh preset khác/slot hệ thống còn dùng thì giữ). Logic thuần:
+  `data/PresetCleanup.kt` (`PresetCleanupTest`). Luôn chừa 100/248/250 và 251–255.
+- Xoá 249 → bỏ mạch khỏi `timecode_last_import.json` (không tự ghi lại khi Phát).
 
 ## Tính năng Import Timecode (tab Đồng Loạt ALL)
 

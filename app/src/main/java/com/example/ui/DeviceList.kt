@@ -90,12 +90,11 @@ import com.example.viewmodel.AddDeviceState
 import com.example.viewmodel.DeviceImageFile
 import com.example.viewmodel.FileCleanupUiState
 import com.example.viewmodel.DevicePresetStorageStats
-import com.example.viewmodel.PresetBulkDeletePreview
-import com.example.viewmodel.PresetBulkDeleteUiState
+import com.example.viewmodel.PresetPurgeItem
+import com.example.viewmodel.PresetPurgeUiState
 import com.example.viewmodel.PresetDeleteAction
 import com.example.viewmodel.PresetDeviceDeleteError
 import com.example.viewmodel.PresetDeletePreview
-import com.example.viewmodel.PresetDeleteUiState
 import com.example.viewmodel.PlaylistPlaybackState
 import com.example.viewmodel.ImageUploadMode
 import com.example.viewmodel.ImageWriteMode

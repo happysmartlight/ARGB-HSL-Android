@@ -354,11 +354,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeDevicePresetStats = MutableStateFlow(DevicePresetStorageStats())
     val activeDevicePresetStats: StateFlow<DevicePresetStorageStats> = _activeDevicePresetStats.asStateFlow()
 
-    private val _presetDeleteState = MutableStateFlow(PresetDeleteUiState())
-    val presetDeleteState: StateFlow<PresetDeleteUiState> = _presetDeleteState.asStateFlow()
 
-    private val _bulkPresetDeleteState = MutableStateFlow(PresetBulkDeleteUiState())
-    val bulkPresetDeleteState: StateFlow<PresetBulkDeleteUiState> = _bulkPresetDeleteState.asStateFlow()
+    private val _presetPurgeState = MutableStateFlow(PresetPurgeUiState())
+    val presetPurgeState: StateFlow<PresetPurgeUiState> = _presetPurgeState.asStateFlow()
 
     private val _fileCleanupState = MutableStateFlow(FileCleanupUiState())
     val fileCleanupState: StateFlow<FileCleanupUiState> = _fileCleanupState.asStateFlow()
@@ -499,8 +497,6 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         _selectedDevice.value = device
         _activeDeviceDetails.value = null
         _activeDevicePresetStats.value = DevicePresetStorageStats()
-        _presetDeleteState.value = PresetDeleteUiState()
-        _bulkPresetDeleteState.value = PresetBulkDeleteUiState()
         if (device != null) {
             viewModelScope.launch {
                 // Ping to update latest state
@@ -710,168 +706,280 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun preparePresetDeletion(device: WledDevice, action: PresetDeleteAction) {
-        if (!device.isOnline) {
-            _presetDeleteState.value = PresetDeleteUiState(error = "Thiết bị ${device.name} đang ngoại tuyến.")
-            return
-        }
-        viewModelScope.launch {
-            _presetDeleteState.value = PresetDeleteUiState(isPreparing = true)
-            try {
-                val presets = fetchPresetsJsonObject(device.ipAddress)
-                val preview = buildPresetDeletionPreview(device, action, presets)
-                _presetDeleteState.value = PresetDeleteUiState(preview = preview)
-            } catch (e: Exception) {
-                android.util.Log.e("WledViewModel", "Error preparing preset deletion", e)
-                _presetDeleteState.value = PresetDeleteUiState(
-                    error = "Không đọc được presets.json từ ${device.name}: ${e.message ?: "lỗi không xác định"}"
-                )
-            }
-        }
+    // ---------------------------------------------------------------------------
+    // DỌN PRESET — 1 nút "Xóa preset + ảnh" (tab ALL: mọi mạch online; tab Cấu Hình Mạch:
+    // mạch đang chọn). Đồng bộ desktop v3.14+.
+    // Quét → người dùng tích chọn preset → mỗi mạch (song song): đọc lại, sao lưu,
+    // xoá preset, đọc lại xác nhận, rồi mới xoá ảnh mà chỉ preset đã xoá dùng.
+    // ---------------------------------------------------------------------------
+
+    private class PurgeScan(
+        val device: WledDevice,
+        val presets: org.json.JSONObject?,
+        val files: List<DeviceImageFile>?,
+        val error: String?
+    )
+
+    private class PurgeOutcome(
+        val device: WledDevice,
+        val presetsOk: Int = 0,
+        val presetsFail: Int = 0,
+        val filesOk: Int = 0,
+        val filesFail: Int = 0,
+        val imagesKeptNoList: Boolean = false,
+        val deletedPlaylist: Boolean = false,
+        val error: String? = null
+    )
+
+    /** Tab Đồng Loạt (ALL): dọn trên mọi mạch online. */
+    fun openPresetPurgeForOnlineDevices() {
+        val online = devices.value.filter { it.isOnline }
+        openPresetPurge(online, "${online.size} mạch online", emptyMessage = "Không có thiết bị online để dọn preset.")
     }
 
-    fun confirmPresetDeletion(device: WledDevice, action: PresetDeleteAction) {
-        viewModelScope.launch {
-            val currentPreview = _presetDeleteState.value.preview
-            _presetDeleteState.value = PresetDeleteUiState(isDeleting = true, preview = currentPreview)
-            try {
-                val result = deletePresetGroupOnDevice(device, action)
-                val details = repository.fetchDeviceDetails(device)
-                if (_selectedDevice.value?.id == device.id) {
-                    _activeDeviceDetails.value = details
-                }
-                refreshPresetStatsForDevice(device)
-                _presetDeleteState.value = PresetDeleteUiState(
-                    resultMessage = "Đã xóa ${result.presetIds.size} preset và ${result.fileRefs.size} file ảnh trên ${device.name}."
-                )
-                log(
-                    "Preset: ${presetDeleteActionLogName(action)} trên ${device.name} - xóa ${result.presetIds.size} preset, ${result.fileRefs.size} file ảnh.",
-                    "WARN"
-                )
-            } catch (e: Exception) {
-                android.util.Log.e("WledViewModel", "Error deleting preset group", e)
-                _presetDeleteState.value = PresetDeleteUiState(
-                    error = "Xóa preset thất bại trên ${device.name}: ${e.message ?: "lỗi không xác định"}"
-                )
-                log("Preset: lỗi xóa trên ${device.name} - ${e.message}", "ERROR")
-            }
-        }
+    /** Tab Cấu Hình Mạch: chỉ dọn trên mạch đang chọn. */
+    fun openPresetPurgeForDevice(device: WledDevice) {
+        val current = devices.value.find { it.id == device.id } ?: device
+        openPresetPurge(
+            if (current.isOnline) listOf(current) else emptyList(),
+            "mạch ${current.name}",
+            emptyMessage = "Thiết bị ${current.name} đang ngoại tuyến."
+        )
     }
 
-    fun preparePresetDeletionForOnlineDevices(action: PresetDeleteAction) {
-        val onlineDevices = devices.value.filter { it.isOnline }
-        if (onlineDevices.isEmpty()) {
-            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(error = "Không có thiết bị online để dọn preset.")
+    /** Mở dialog chọn preset: đọc presets.json + danh sách file của các mạch [online] (song song). */
+    private fun openPresetPurge(online: List<WledDevice>, scopeLabel: String, emptyMessage: String) {
+        if (_presetPurgeState.value.isBusy) return
+        if (online.isEmpty()) {
+            _presetPurgeState.value = PresetPurgeUiState(isVisible = true, error = emptyMessage)
             return
         }
-
+        _presetPurgeState.value = PresetPurgeUiState(
+            isVisible = true, isScanning = true, deviceCount = online.size, scopeLabel = scopeLabel
+        )
         viewModelScope.launch {
-            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(isPreparing = true)
-            val previews = mutableListOf<PresetDeletePreview>()
-            val errors = mutableListOf<PresetDeviceDeleteError>()
-
-            for (device in onlineDevices) {
-                try {
-                    val presets = fetchPresetsJsonObject(device.ipAddress)
-                    previews += buildPresetDeletionPreview(device, action, presets)
-                } catch (e: Exception) {
-                    android.util.Log.e("WledViewModel", "Error preparing bulk preset deletion", e)
-                    errors += PresetDeviceDeleteError(
-                        deviceName = device.name,
-                        deviceIp = device.ipAddress,
-                        message = e.message ?: "lỗi không xác định"
-                    )
+            val scans = withContext(Dispatchers.IO) {
+                online.map { d -> async { scanDeviceForPurge(d) } }.awaitAll()
+            }
+            val ok = scans.filter { it.presets != null }
+            val byPid = java.util.TreeMap<Int, PresetPurgeItem>()
+            var orphanCount = 0
+            var orphanBytes = 0L
+            var orphanDevices = 0
+            for (scan in ok) {
+                val presets = scan.presets!!
+                for (pid in PresetCleanup.deletablePids(presets)) {
+                    val images = PresetCleanup.presetImages(presets.opt(pid.toString()))
+                    val prev = byPid[pid]
+                    byPid[pid] = if (prev == null) {
+                        PresetPurgeItem(
+                            pid = pid,
+                            name = PresetCleanup.presetName(presets, pid),
+                            group = PresetCleanup.groupOf(pid),
+                            images = images,
+                            deviceCount = 1
+                        )
+                    } else {
+                        prev.copy(images = (prev.images + images).distinct(), deviceCount = prev.deviceCount + 1)
+                    }
+                }
+                val files = scan.files ?: continue
+                val orphans = PresetCleanup.orphanImages(presets, files.map { it.path })
+                if (orphans.isNotEmpty()) {
+                    orphanDevices++
+                    orphanCount += orphans.size
+                    val sizes = files.associate { it.path.lowercase() to it.sizeBytes }
+                    orphanBytes += orphans.sumOf { sizes[it.lowercase()] ?: 0L }
                 }
             }
-
-            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(
-                preview = PresetBulkDeletePreview(
-                    action = action,
-                    devicePreviews = previews,
-                    errors = errors
-                )
+            _presetPurgeState.value = PresetPurgeUiState(
+                isVisible = true,
+                deviceCount = ok.size,
+                scopeLabel = scopeLabel,
+                deviceIds = ok.map { it.device.id },
+                items = byPid.values.toList(),
+                orphanCount = orphanCount,
+                orphanBytes = orphanBytes,
+                orphanDevices = orphanDevices,
+                scanErrors = scans.filter { it.error != null }.map {
+                    PresetDeviceDeleteError(it.device.name, it.device.ipAddress, it.error!!)
+                },
+                scanWarnings = ok.filter { it.files == null }.map {
+                    "${it.device.name}: không đọc được danh sách file — chỉ xoá preset, giữ nguyên ảnh."
+                }
             )
         }
     }
 
-    fun confirmPresetDeletionForOnlineDevices(action: PresetDeleteAction) {
+    private suspend fun scanDeviceForPurge(d: WledDevice): PurgeScan {
+        val presets = try {
+            fetchPresetsJsonObject(d.ipAddress)
+        } catch (e: Exception) {
+            return PurgeScan(d, null, null, "không đọc được presets.json: ${e.message ?: "lỗi kết nối"}")
+        }
+        val files = try {
+            fetchDeviceFileEntries(d.ipAddress)
+        } catch (e: Exception) {
+            null
+        }
+        return PurgeScan(d, presets, files, null)
+    }
+
+    /** Xoá các preset [pids] (kèm ảnh của chúng) trên mọi mạch đã quét; [includeOrphans] = xoá cả ảnh thừa. */
+    fun confirmPresetPurge(pids: Set<Int>, includeOrphans: Boolean) {
+        val state = _presetPurgeState.value
+        if (state.isBusy || (pids.isEmpty() && !includeOrphans)) return
+        val targets = devices.value.filter { it.id in state.deviceIds }
+        if (targets.isEmpty()) {
+            _presetPurgeState.value = state.copy(error = "Không còn thiết bị nào để xoá.")
+            return
+        }
+        _presetPurgeState.value = state.copy(isDeleting = true, progressNote = "Đang chuẩn bị xoá trên ${targets.size} mạch...")
+        val progress = java.util.concurrent.ConcurrentHashMap<String, String>()
+        fun publishProgress() {
+            _presetPurgeState.update { it.copy(progressNote = targets.mapNotNull { d -> progress[d.ipAddress] }.joinToString(" · ")) }
+        }
+
         viewModelScope.launch {
-            val currentPreview = _bulkPresetDeleteState.value.preview
-            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(isDeleting = true, preview = currentPreview)
-
-            val targetPreviews = currentPreview?.devicePreviews.orEmpty()
-            if (targetPreviews.isEmpty()) {
-                _bulkPresetDeleteState.value = PresetBulkDeleteUiState(error = "Không có thiết bị nào đã sẵn sàng để xóa.")
-                return@launch
+            val outcomes = withContext(Dispatchers.IO) {
+                targets.map { d ->
+                    async {
+                        purgeOnDevice(d, pids, includeOrphans) { note ->
+                            progress[d.ipAddress] = "${d.name}: $note"
+                            publishProgress()
+                        }
+                    }
+                }.awaitAll()
             }
 
-            var successCount = 0
-            var totalPresetDeleted = 0
-            var totalFileDeleted = 0
-            val errors = currentPreview?.errors?.toMutableList() ?: mutableListOf()
-
-            for (preview in targetPreviews) {
-                val device = devices.value.find { it.id == preview.deviceId || it.ipAddress == preview.deviceIp }
-                    ?: WledDevice(
-                        id = preview.deviceId,
-                        name = preview.deviceName,
-                        ipAddress = preview.deviceIp,
-                        isOnline = true
+            val presetsOk = outcomes.sumOf { it.presetsOk }
+            val presetsFail = outcomes.sumOf { it.presetsFail }
+            val filesOk = outcomes.sumOf { it.filesOk }
+            val filesFail = outcomes.sumOf { it.filesFail }
+            val errors = outcomes.mapNotNull { o ->
+                when {
+                    o.error != null -> PresetDeviceDeleteError(o.device.name, o.device.ipAddress, o.error)
+                    o.presetsFail > 0 || o.filesFail > 0 -> PresetDeviceDeleteError(
+                        o.device.name, o.device.ipAddress,
+                        "${o.presetsFail} preset, ${o.filesFail} ảnh không xoá được"
                     )
-                try {
-                    val result = deletePresetGroupOnDevice(device, action)
-                    successCount++
-                    totalPresetDeleted += result.presetIds.size
-                    totalFileDeleted += result.fileRefs.size
-                    log(
-                        "Preset ALL: ${presetDeleteActionLogName(action)} trên ${device.name} - xóa ${result.presetIds.size} preset, ${result.fileRefs.size} file ảnh.",
-                        "WARN"
-                    )
-                } catch (e: Exception) {
-                    android.util.Log.e("WledViewModel", "Error deleting bulk preset group", e)
-                    errors += PresetDeviceDeleteError(
-                        deviceName = device.name,
-                        deviceIp = device.ipAddress,
-                        message = e.message ?: "lỗi không xác định"
-                    )
-                    log("Preset ALL: lỗi xóa trên ${device.name} - ${e.message}", "ERROR")
+                    else -> null
                 }
             }
-
-            _selectedDevice.value?.let { selected ->
-                val details = repository.fetchDeviceDetails(selected)
-                if (_selectedDevice.value?.id == selected.id) {
-                    _activeDeviceDetails.value = details
-                }
-                refreshPresetStatsForDevice(selected)
+            val lines = outcomes.filter { it.error == null }.map { o ->
+                "${o.device.name}: xoá ${o.presetsOk} preset + ${o.filesOk} ảnh" +
+                    if (o.imagesKeptNoList) " (giữ ảnh — không đọc được danh sách file)" else ""
             }
+            log(
+                "Dọn preset (${state.scopeLabel}): xoá $presetsOk preset + $filesOk ảnh trên ${targets.size} mạch" +
+                    if (presetsFail + filesFail > 0) " ($presetsFail preset, $filesFail ảnh lỗi)" else "",
+                if (errors.isEmpty()) "WARN" else "ERROR"
+            )
+
+            // Dữ liệu đã đổi trên mạch → làm mới thống kê, danh sách preset tab Biên Tập, timeline 249.
+            _editorPresets.value = _editorPresets.value - targets.map { it.id }.toSet()
             refreshOnlineDevicePresetStats()
-
-            val errorText = if (errors.isEmpty()) {
-                ""
-            } else {
-                " Có ${errors.size} thiết bị lỗi."
+            _selectedDevice.value?.let { selected ->
+                if (targets.any { it.id == selected.id }) {
+                    val details = repository.fetchDeviceDetails(selected)
+                    if (_selectedDevice.value?.id == selected.id) _activeDeviceDetails.value = details
+                    refreshPresetStatsForDevice(selected)
+                }
             }
-            _bulkPresetDeleteState.value = PresetBulkDeleteUiState(
-                resultMessage = "Đã dọn $successCount/${targetPreviews.size} thiết bị online, xóa $totalPresetDeleted preset và $totalFileDeleted file ảnh.$errorText",
+            if (outcomes.any { it.deletedPlaylist }) fetchTimelinesForAllDevices(playlistPresetSlot)
+
+            _presetPurgeState.value = PresetPurgeUiState(
+                isVisible = true,
+                resultMessage = "Đã xoá $presetsOk preset và $filesOk ảnh trên ${outcomes.count { it.error == null }}/${targets.size} mạch.",
+                resultLines = lines,
                 resultErrors = errors
             )
         }
     }
 
-    fun dismissPresetDeletionDialog() {
-        val state = _presetDeleteState.value
-        if (!state.isPreparing && !state.isDeleting) {
-            _presetDeleteState.value = PresetDeleteUiState()
+    private suspend fun purgeOnDevice(
+        d: WledDevice,
+        selected: Set<Int>,
+        includeOrphans: Boolean,
+        onProgress: (String) -> Unit
+    ): PurgeOutcome {
+        val ip = d.ipAddress
+        return try {
+            onProgress("đọc lại preset")
+            // Đọc lại ngay trước khi xoá (dialog có thể đã mở lâu).
+            val text = fetchPresetsText(ip)
+            val presets = parsePresetsText(text)
+            val files = try { fetchDeviceFileEntries(ip) } catch (e: Exception) { null }
+            val paths = files?.map { it.path }.orEmpty()
+            val pids = PresetCleanup.deletablePids(presets).filter { it in selected }
+            val extra = if (includeOrphans && files != null) PresetCleanup.orphanImages(presets, paths) else emptyList()
+            val plan = PresetCleanup.plan(presets, paths, pids, extra)
+            if (plan.isEmpty) {
+                onProgress("không có gì để xoá")
+                return PurgeOutcome(d, imagesKeptNoList = files == null && pids.isNotEmpty())
+            }
+
+            backupPresets(d.mac ?: ip, text, ip)
+            runCatching { safeState(ip) }
+
+            val requested = HashSet<Int>()
+            plan.pids.forEachIndexed { i, pid ->
+                onProgress("xoá preset ${i + 1}/${plan.pids.size}")
+                try {
+                    deletePresetSlot(ip, pid)
+                    requested += pid
+                } catch (e: Exception) {
+                    android.util.Log.w("WledViewModel", "pdel $pid failed on $ip", e)
+                }
+                delay(150)
+            }
+            // Đọc lại xác nhận: firmware có thể bỏ qua lệnh mà không báo lỗi.
+            val deleted: Set<Int> = if (MockDevice.isMock(ip) || plan.pids.isEmpty()) {
+                requested
+            } else {
+                val after = try { fetchPresetsJsonObject(ip) } catch (e: Exception) { null }
+                after?.let { a -> plan.pids.filter { !PresetSlots.isNonEmptyPreset(a.opt(it.toString())) }.toSet() } ?: requested
+            }
+
+            val toDelete = plan.filesAfter(deleted)
+            var filesOk = 0
+            var filesFail = 0
+            toDelete.forEachIndexed { i, path ->
+                onProgress("xoá ảnh ${i + 1}/${toDelete.size}")
+                try {
+                    deleteDeviceFile(ip, path)
+                    filesOk++
+                } catch (e: Exception) {
+                    filesFail++
+                }
+                delay(150)
+            }
+            onProgress("xong")
+
+            // Preset đã đổi → lần Phát sau phải đối chiếu lại; xoá 249 thì không tự ghi lại từ file timecode.
+            verifiedIps.remove(ip)
+            val deletedPlaylist = PresetSlots.PLAYLIST in deleted
+            if (deletedPlaylist) forgetLastImportFor(ip, d.mac)
+
+            PurgeOutcome(
+                device = d,
+                presetsOk = deleted.size,
+                presetsFail = plan.pids.size - deleted.size,
+                filesOk = filesOk,
+                filesFail = filesFail,
+                imagesKeptNoList = files == null,
+                deletedPlaylist = deletedPlaylist
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("WledViewModel", "purgeOnDevice failed for $ip", e)
+            PurgeOutcome(d, error = e.message ?: "lỗi không xác định")
         }
     }
 
-    fun dismissBulkPresetDeletionDialog() {
-        val state = _bulkPresetDeleteState.value
-        if (!state.isPreparing && !state.isDeleting) {
-            _bulkPresetDeleteState.value = PresetBulkDeleteUiState()
-        }
+    fun dismissPresetPurge() {
+        if (!_presetPurgeState.value.isBusy) _presetPurgeState.value = PresetPurgeUiState()
     }
+
 
     private suspend fun refreshPresetStatsForDevice(device: WledDevice) {
         if (_selectedDevice.value?.id != device.id) return
@@ -1180,14 +1288,6 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearFileCleanupResult() {
         _fileCleanupState.value = _fileCleanupState.value.copy(resultMessage = null, error = null)
-    }
-
-    private fun presetDeleteActionLogName(action: PresetDeleteAction): String {
-        return when (action) {
-            PresetDeleteAction.LOGO_IMAGES -> "xóa nhóm logo/ảnh"
-            PresetDeleteAction.TIMECODE_GROUP -> "xóa nhóm preset timecode"
-            PresetDeleteAction.ALL_EXCEPT_SYSTEM -> "xóa tất cả preset trừ hệ thống"
-        }
     }
 
     override fun onCleared() {
@@ -3630,34 +3730,47 @@ data class FileCleanupUiState(
     val resultMessage: String? = null
 )
 
-data class PresetDeleteUiState(
-    val isPreparing: Boolean = false,
-    val isDeleting: Boolean = false,
-    val preview: PresetDeletePreview? = null,
-    val resultMessage: String? = null,
-    val error: String? = null
-)
-
 data class PresetDeviceDeleteError(
     val deviceName: String,
     val deviceIp: String,
     val message: String
 )
 
-data class PresetBulkDeletePreview(
-    val action: PresetDeleteAction,
-    val devicePreviews: List<PresetDeletePreview>,
-    val errors: List<PresetDeviceDeleteError> = emptyList()
+/** Một preset trong dialog "Xóa preset + ảnh" (gộp theo ID từ mọi mạch online). */
+data class PresetPurgeItem(
+    val pid: Int,
+    val name: String,
+    val group: PresetCleanup.Group,
+    /** Ảnh preset này dùng (gộp các mạch). */
+    val images: List<String>,
+    /** Số mạch đang có preset ở ID này. */
+    val deviceCount: Int
 )
 
-data class PresetBulkDeleteUiState(
-    val isPreparing: Boolean = false,
+/** State dialog "Xóa preset + ảnh" của tab Đồng Loạt (ALL). */
+data class PresetPurgeUiState(
+    val isVisible: Boolean = false,
+    val isScanning: Boolean = false,
     val isDeleting: Boolean = false,
-    val preview: PresetBulkDeletePreview? = null,
+    /** Số mạch đọc được preset (đích xoá). */
+    val deviceCount: Int = 0,
+    /** "3 mạch online" / "mạch ARGB-2X PRO" — hiện trong dialog. */
+    val scopeLabel: String = "",
+    val deviceIds: List<Int> = emptyList(),
+    val items: List<PresetPurgeItem> = emptyList(),
+    val orphanCount: Int = 0,
+    val orphanBytes: Long = 0L,
+    val orphanDevices: Int = 0,
+    val scanErrors: List<PresetDeviceDeleteError> = emptyList(),
+    val scanWarnings: List<String> = emptyList(),
+    val progressNote: String? = null,
     val resultMessage: String? = null,
+    val resultLines: List<String> = emptyList(),
     val resultErrors: List<PresetDeviceDeleteError> = emptyList(),
     val error: String? = null
-)
+) {
+    val isBusy: Boolean get() = isScanning || isDeleting
+}
 
 data class DevicePlaylistStep(
     val presetId: Int,

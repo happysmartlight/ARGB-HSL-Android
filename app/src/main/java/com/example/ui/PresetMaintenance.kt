@@ -90,12 +90,11 @@ import com.example.viewmodel.AddDeviceState
 import com.example.viewmodel.DeviceImageFile
 import com.example.viewmodel.FileCleanupUiState
 import com.example.viewmodel.DevicePresetStorageStats
-import com.example.viewmodel.PresetBulkDeletePreview
-import com.example.viewmodel.PresetBulkDeleteUiState
+import com.example.viewmodel.PresetPurgeItem
+import com.example.viewmodel.PresetPurgeUiState
 import com.example.viewmodel.PresetDeleteAction
 import com.example.viewmodel.PresetDeviceDeleteError
 import com.example.viewmodel.PresetDeletePreview
-import com.example.viewmodel.PresetDeleteUiState
 import com.example.viewmodel.PlaylistPlaybackState
 import com.example.viewmodel.ImageUploadMode
 import com.example.viewmodel.ImageWriteMode
@@ -158,7 +157,7 @@ internal fun PresetCapacityWarningCard(
 internal fun PresetCleanupPanel(
     stats: DevicePresetStorageStats,
     isBusy: Boolean,
-    onAction: (PresetDeleteAction) -> Unit
+    onOpenPurge: () -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -195,26 +194,12 @@ internal fun PresetCleanupPanel(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
             )
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                PresetDeleteActionButton(
-                    title = "XÓA ALL PRESET LOGO/ẢNH",
-                    subtitle = "Slot 1-59, chỉ xóa file ảnh không còn preset khác dùng",
-                    enabled = !isBusy,
-                    onClick = { onAction(PresetDeleteAction.LOGO_IMAGES) }
-                )
-                PresetDeleteActionButton(
-                    title = "XÓA ALL PRESET THUỘC NHÓM PRESET",
-                    subtitle = "Slot 60-240, 256+ (mạch firmware mới) và playlist 249, bỏ qua slot được giữ",
-                    enabled = !isBusy,
-                    onClick = { onAction(PresetDeleteAction.TIMECODE_GROUP) }
-                )
-                PresetDeleteActionButton(
-                    title = "XÓA ALL PRESET TRỪ HỆ THỐNG",
-                    subtitle = "Giữ slot 100, 248, 250; cho phép xóa playlist 249",
-                    enabled = !isBusy,
-                    onClick = { onAction(PresetDeleteAction.ALL_EXCEPT_SYSTEM) }
-                )
-            }
+            PresetDeleteActionButton(
+                title = "XÓA PRESET + ẢNH…",
+                subtitle = "Chọn preset cần xoá trên mạch này — ảnh BMP/GIF của preset bị xoá cùng, ảnh preset khác còn dùng được giữ lại",
+                enabled = !isBusy,
+                onClick = onOpenPurge
+            )
         }
     }
 }
@@ -225,7 +210,7 @@ internal fun BulkPresetCleanupPanel(
     onlineStats: Map<Int, DevicePresetStorageStats>,
     isBusy: Boolean,
     onRefresh: () -> Unit,
-    onAction: (PresetDeleteAction) -> Unit
+    onOpenPurge: () -> Unit
 ) {
     val onlineDevices = devices.filter { it.isOnline }
     val warningDevices = onlineDevices.mapNotNull { device ->
@@ -304,26 +289,12 @@ internal fun BulkPresetCleanupPanel(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
             )
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                PresetDeleteActionButton(
-                    title = "XÓA LOGO/ẢNH TRÊN TẤT CẢ ONLINE",
-                    subtitle = "Mỗi mạch xóa slot 1-59 và file ảnh không còn dùng chung",
-                    enabled = !isBusy && onlineDevices.isNotEmpty(),
-                    onClick = { onAction(PresetDeleteAction.LOGO_IMAGES) }
-                )
-                PresetDeleteActionButton(
-                    title = "XÓA NHÓM PRESET TRÊN TẤT CẢ ONLINE",
-                    subtitle = "Mỗi mạch xóa slot 60-240, 256+ và playlist 249",
-                    enabled = !isBusy && onlineDevices.isNotEmpty(),
-                    onClick = { onAction(PresetDeleteAction.TIMECODE_GROUP) }
-                )
-                PresetDeleteActionButton(
-                    title = "XÓA ALL PRESET ONLINE TRỪ HỆ THỐNG",
-                    subtitle = "Giữ slot 100, 248, 250; cho phép xóa playlist 249",
-                    enabled = !isBusy && onlineDevices.isNotEmpty(),
-                    onClick = { onAction(PresetDeleteAction.ALL_EXCEPT_SYSTEM) }
-                )
-            }
+            PresetDeleteActionButton(
+                title = "XÓA PRESET + ẢNH…",
+                subtitle = "Chọn preset cần xoá trên mọi mạch online — ảnh BMP/GIF của preset bị xoá cùng, ảnh preset khác còn dùng được giữ lại",
+                enabled = !isBusy && onlineDevices.isNotEmpty(),
+                onClick = onOpenPurge
+            )
         }
     }
 }
@@ -372,312 +343,314 @@ internal fun PresetDeleteActionButton(
     }
 }
 
+private fun purgeGroupTitle(group: PresetCleanup.Group): String = when (group) {
+    PresetCleanup.Group.LOGO -> "Logo / ảnh POI · Cờ LED (1–59)"
+    PresetCleanup.Group.TIMECODE -> "Timecode (60–240, 256+)"
+    PresetCleanup.Group.PLAYLIST -> "Playlist 249"
+    PresetCleanup.Group.OTHER -> "Khác"
+}
+
+private fun purgeGroupChip(group: PresetCleanup.Group): String = when (group) {
+    PresetCleanup.Group.LOGO -> "Logo/ảnh"
+    PresetCleanup.Group.TIMECODE -> "Timecode"
+    PresetCleanup.Group.PLAYLIST -> "Playlist 249"
+    PresetCleanup.Group.OTHER -> "Khác"
+}
+
+/** Chip chọn nhanh cả nhóm (bấm lại để bỏ chọn). */
 @Composable
-internal fun PresetDeleteDialog(
-    state: PresetDeleteUiState,
-    onConfirm: (PresetDeletePreview) -> Unit,
+private fun PurgeGroupChip(text: String, checked: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val tint = if (checked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .border(1.dp, tint.copy(alpha = if (checked) 0.8f else 0.3f), RoundedCornerShape(50))
+            .background(if (checked) MaterialTheme.colorScheme.error.copy(alpha = 0.10f) else Color.Transparent)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        if (checked) Icon(Icons.Default.Check, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp))
+        Text(text, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = tint)
+    }
+}
+
+/**
+ * Dialog "Xóa preset + ảnh" (tab Đồng Loạt ALL): tích chọn preset (gộp theo ID trên mọi mạch
+ * online, chia nhóm), tuỳ chọn ảnh thừa, xác nhận 2 bước rồi xoá. Trên tablet danh sách chia
+ * nhiều cột.
+ */
+@Composable
+internal fun PresetPurgeDialog(
+    state: PresetPurgeUiState,
+    onConfirm: (Set<Int>, Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val hasContent = state.isPreparing || state.isDeleting || state.preview != null ||
-        state.resultMessage != null || state.error != null
-    if (!hasContent) return
+    if (!state.isVisible) return
+    val dim = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
 
-    Dialog(onDismissRequest = { if (!state.isPreparing && !state.isDeleting) onDismiss() }) {
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                when {
-                    state.isPreparing || state.isDeleting -> {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
-                            Column {
-                                Text(
-                                    text = if (state.isDeleting) "ĐANG XÓA PRESET" else "ĐANG KIỂM TRA PRESET",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Black
-                                )
-                                Text(
-                                    text = if (state.isDeleting) "App đang xóa tuần tự và refresh lại bộ nhớ." else "App đang đọc presets.json mới nhất để tính số preset và file ảnh.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
-                                )
-                            }
-                        }
-                    }
-
-                    state.preview != null -> {
-                        val preview = state.preview
-                        val canDelete = preview.presetIds.isNotEmpty() || preview.fileRefs.isNotEmpty()
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = presetDeleteTitle(preview.action),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Black,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                                Text(
-                                    text = "${preview.deviceName} · ${preview.deviceIp}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
-                                )
-                            }
-                        }
-
-                        HorizontalDivider()
-
-                        DeviceInfoRow("Preset sẽ xóa:", "${preview.presetIds.size} slot")
-                        DeviceInfoRow("File ảnh sẽ xóa:", "${preview.fileRefs.size} file")
-                        DeviceInfoRow("Slot được giữ:", preview.protectedSlots.joinToString(", "))
-                        if (preview.presetIds.isNotEmpty()) {
-                            Text(
-                                text = "Slot mục tiêu: ${summarizePresetIds(preview.presetIds)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
-                            )
-                        }
+    TimecodeDialogFrame(
+        onDismissRequest = { if (!state.isBusy) onDismiss() },
+        borderColor = MaterialTheme.colorScheme.error.copy(alpha = 0.35f)
+    ) {
+        when {
+            state.isScanning || state.isDeleting -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = presetDeleteSafetyNote(preview.action),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                            text = if (state.isDeleting) "ĐANG XÓA PRESET + ẢNH" else "ĐANG ĐỌC PRESET TRÊN ${state.scopeLabel.uppercase()}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Black
                         )
-
-                        HorizontalDivider()
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(onClick = onDismiss) {
-                                Text("Hủy")
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            Button(
-                                onClick = { onConfirm(preview) },
-                                enabled = canDelete,
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (canDelete) "Xóa ngay" else "Không có gì để xóa")
-                            }
-                        }
-                    }
-
-                    else -> {
-                        val isError = state.error != null
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isError) Icons.Default.Warning else Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = if (isError) MaterialTheme.colorScheme.error else Color(0xFF00A86B)
-                            )
-                            Text(
-                                text = if (isError) "THAO TÁC THẤT BẠI" else "ĐÃ DỌN PRESET",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Black
-                            )
-                        }
                         Text(
-                            text = state.error ?: state.resultMessage.orEmpty(),
+                            text = if (state.isDeleting) (state.progressNote ?: "")
+                                   else "Đọc presets.json và danh sách ảnh trên từng mạch...",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                            color = dim
                         )
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            Button(onClick = onDismiss) {
-                                Text("Đã hiểu")
-                            }
-                        }
                     }
                 }
             }
+
+            state.resultMessage != null || state.error != null -> {
+                val isError = state.error != null || state.resultErrors.isNotEmpty()
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(
+                        imageVector = if (isError) Icons.Default.Warning else Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = if (isError) MaterialTheme.colorScheme.error else Color(0xFF00A86B)
+                    )
+                    Text(
+                        text = when {
+                            state.error != null -> "KHÔNG THỂ DỌN PRESET"
+                            isError -> "ĐÃ DỌN (CÓ LỖI)"
+                            else -> "ĐÃ XÓA PRESET + ẢNH"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+                Text(
+                    text = state.error ?: state.resultMessage.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                )
+                state.resultLines.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall, color = dim) }
+                PresetDeviceErrorList(state.resultErrors)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Button(onClick = onDismiss) { Text("Đã hiểu") }
+                }
+            }
+
+            else -> PresetPurgePicker(state, onConfirm, onDismiss)
         }
     }
 }
 
 @Composable
-internal fun PresetBulkDeleteDialog(
-    state: PresetBulkDeleteUiState,
-    onConfirm: (PresetBulkDeletePreview) -> Unit,
+private fun ColumnScope.PresetPurgePicker(
+    state: PresetPurgeUiState,
+    onConfirm: (Set<Int>, Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val hasContent = state.isPreparing || state.isDeleting || state.preview != null ||
-        state.resultMessage != null || state.error != null
-    if (!hasContent) return
+    val dim = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    var selected by remember(state.items) { mutableStateOf(emptySet<Int>()) }
+    var withOrphans by remember(state.items) { mutableStateOf(false) }
+    var confirming by remember(state.items) { mutableStateOf(false) }
+    val groups = state.items.groupBy { it.group }
+    val order = listOf(PresetCleanup.Group.LOGO, PresetCleanup.Group.TIMECODE, PresetCleanup.Group.PLAYLIST, PresetCleanup.Group.OTHER)
+    val selectedItems = state.items.filter { it.pid in selected }
+    val selectedImages = selectedItems.flatMap { it.images }.distinct().size
 
-    Dialog(onDismissRequest = { if (!state.isPreparing && !state.isDeleting) onDismiss() }) {
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                when {
-                    state.isPreparing || state.isDeleting -> {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
-                            Column {
-                                Text(
-                                    text = if (state.isDeleting) "ĐANG XÓA PRESET ONLINE" else "ĐANG KIỂM TRA THIẾT BỊ ONLINE",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Black
-                                )
-                                Text(
-                                    text = if (state.isDeleting) "App đang xóa tuần tự trên từng thiết bị online." else "App đang đọc presets.json mới nhất trên từng mạch.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
-                                )
-                            }
-                        }
-                    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "XÓA PRESET + ẢNH",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Black,
+                color = MaterialTheme.colorScheme.error
+            )
+            Text(
+                text = "Chọn preset cần xoá trên ${state.scopeLabel}. Ảnh BMP/GIF của preset bị xoá được xoá cùng; " +
+                    "ảnh mà preset khác còn dùng được giữ lại. Luôn chừa slot hệ thống 100, 248, 250.",
+                style = MaterialTheme.typography.bodySmall,
+                color = dim
+            )
+        }
+    }
 
-                    state.preview != null -> {
-                        val preview = state.preview
-                        val totalPresets = preview.devicePreviews.sumOf { it.presetIds.size }
-                        val totalFiles = preview.devicePreviews.sumOf { it.fileRefs.size }
-                        val canDelete = totalPresets > 0 || totalFiles > 0
+    state.scanWarnings.forEach { Text("⚠ $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary) }
+    PresetDeviceErrorList(state.scanErrors)
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = presetDeleteTitle(preview.action),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Black,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                                Text(
-                                    text = "Áp dụng cho ${preview.devicePreviews.size} thiết bị online đã đọc được",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
-                                )
-                            }
-                        }
+    if (state.items.isEmpty() && state.orphanCount == 0) {
+        Text("Không có preset hay ảnh thừa nào để xoá trên các mạch online. 🎉", style = MaterialTheme.typography.bodyMedium)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Button(onClick = onDismiss) { Text("Đóng") }
+        }
+        return
+    }
 
-                        HorizontalDivider()
-                        DeviceInfoRow("Tổng preset sẽ xóa:", "$totalPresets slot")
-                        DeviceInfoRow("Tổng file ảnh sẽ xóa:", "$totalFiles file")
-                        DeviceInfoRow("Thiết bị lỗi khi kiểm tra:", "${preview.errors.size}")
+    // Chọn nhanh theo nhóm.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        order.forEach { g ->
+            val ids = groups[g]?.map { it.pid }?.toSet() ?: return@forEach
+            val all = selected.containsAll(ids)
+            PurgeGroupChip("${purgeGroupChip(g)} · ${ids.size}", all, enabled = !confirming) {
+                selected = if (all) selected - ids else selected + ids
+            }
+        }
+        val allIds = state.items.map { it.pid }.toSet()
+        TextButton(
+            onClick = { selected = if (selected.containsAll(allIds)) emptySet() else allIds },
+            enabled = !confirming && allIds.isNotEmpty()
+        ) { Text(if (allIds.isNotEmpty() && selected.containsAll(allIds)) "Bỏ chọn hết" else "Chọn hết") }
+    }
 
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 220.dp)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            preview.devicePreviews.forEach { item ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
-                                        .padding(10.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(item.deviceName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-                                        Text(
-                                            item.deviceIp,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f)
-                                        )
-                                    }
-                                    Text(
-                                        text = "${item.presetIds.size} preset · ${item.fileRefs.size} file",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Black,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                }
-                            }
-                            PresetDeviceErrorList(preview.errors)
-                        }
-
-                        Text(
-                            text = "Slot 100, 248, 250 luôn được giữ; playlist 249 sẽ bị xóa nếu nằm trong nhóm mục tiêu.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 300.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f, fill = false),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        order.forEach { g ->
+            val list = groups[g] ?: return@forEach
+            item(span = { GridItemSpan(maxLineSpan) }, key = "h_$g") {
+                Text(
+                    text = "${purgeGroupTitle(g)} — ${list.size} preset",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            items(list, key = { it.pid }) { item ->
+                val checked = item.pid in selected
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            if (checked) MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
                         )
-
-                        HorizontalDivider()
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(onClick = onDismiss) { Text("Hủy") }
-                            Spacer(Modifier.width(8.dp))
-                            Button(
-                                onClick = { onConfirm(preview) },
-                                enabled = canDelete,
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (canDelete) "Xóa tất cả online" else "Không có gì để xóa")
-                            }
+                        .clickable(enabled = !confirming) {
+                            selected = if (checked) selected - item.pid else selected + item.pid
                         }
-                    }
-
-                    else -> {
-                        val isError = state.error != null
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isError) Icons.Default.Warning else Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = if (isError) MaterialTheme.colorScheme.error else Color(0xFF00A86B)
-                            )
-                            Text(
-                                text = if (isError) "THAO TÁC THẤT BẠI" else "ĐÃ DỌN PRESET ONLINE",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Black
-                            )
-                        }
+                        .padding(end = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = checked,
+                        enabled = !confirming,
+                        onCheckedChange = { on -> selected = if (on) selected + item.pid else selected - item.pid }
+                    )
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                         Text(
-                            text = state.error ?: state.resultMessage.orEmpty(),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                            text = "${item.pid} · ${item.name}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        PresetDeviceErrorList(state.resultErrors)
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            Button(onClick = onDismiss) { Text("Đã hiểu") }
-                        }
+                        Text(
+                            text = buildString {
+                                if (item.images.isNotEmpty()) append("kèm ảnh ${item.images.joinToString { it.trimStart('/') }}")
+                                if (item.images.isNotEmpty() && state.deviceCount > 1) append(" · ")
+                                if (state.deviceCount > 1) append("${item.deviceCount}/${state.deviceCount} mạch")
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = dim,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
+        }
+    }
+
+    if (state.orphanCount > 0) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f))
+                .clickable(enabled = !confirming) { withOrphans = !withOrphans }
+                .padding(end = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(checked = withOrphans, enabled = !confirming, onCheckedChange = { withOrphans = it })
+            Column(modifier = Modifier.weight(1f)) {
+                Text("🧹 Ảnh thừa không thuộc preset nào", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "${state.orphanCount} file · ${formatFileBytes(state.orphanBytes)}" +
+                        if (state.deviceCount > 1) " trên ${state.orphanDevices} mạch" else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = dim
+                )
+            }
+        }
+    }
+
+    HorizontalDivider()
+
+    val nothing = selected.isEmpty() && !withOrphans
+    val summary = buildString {
+        append("Sẽ xoá ${selected.size} preset")
+        if (selectedImages > 0) append(" + tối đa $selectedImages ảnh đi kèm")
+        if (withOrphans) append(" + ${state.orphanCount} ảnh thừa")
+        append(" trên ${state.scopeLabel}.")
+    }
+    if (confirming) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.12f))
+                .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text("Xác nhận xoá?", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error)
+            Text(summary, style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Không hoàn tác được trên mạch. App sao lưu presets.json cũ trong máy trước khi xoá.",
+                style = MaterialTheme.typography.bodySmall,
+                color = dim
+            )
+        }
+    } else {
+        Text(if (nothing) "Chưa chọn preset nào." else summary, style = MaterialTheme.typography.bodySmall, color = dim)
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TextButton(onClick = { if (confirming) confirming = false else onDismiss() }) {
+            Text(if (confirming) "Quay lại" else "Hủy")
+        }
+        Spacer(Modifier.width(8.dp))
+        Button(
+            onClick = { if (confirming) onConfirm(selected, withOrphans) else confirming = true },
+            enabled = !nothing,
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+        ) {
+            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(if (confirming) "XÁC NHẬN XOÁ" else "Xóa ${selected.size} preset + ảnh")
         }
     }
 }
@@ -918,22 +891,6 @@ internal fun presetCapacityWarnings(stats: DevicePresetStorageStats): List<Strin
 internal fun percentOf(used: Int, capacity: Int): Int {
     if (capacity <= 0) return 0
     return ((used * 100f) / capacity).toInt()
-}
-
-internal fun presetDeleteTitle(action: PresetDeleteAction): String {
-    return when (action) {
-        PresetDeleteAction.LOGO_IMAGES -> "XÓA ALL PRESET LOGO/ẢNH"
-        PresetDeleteAction.TIMECODE_GROUP -> "XÓA ALL PRESET THUỘC NHÓM PRESET"
-        PresetDeleteAction.ALL_EXCEPT_SYSTEM -> "XÓA ALL PRESET TRỪ HỆ THỐNG"
-    }
-}
-
-internal fun presetDeleteSafetyNote(action: PresetDeleteAction): String {
-    return when (action) {
-        PresetDeleteAction.LOGO_IMAGES -> "Chỉ xóa slot 1-59 và file ảnh được nhóm này tham chiếu nếu không còn preset khác dùng."
-        PresetDeleteAction.TIMECODE_GROUP -> "Xóa slot 60-240, 256+ và playlist 249; file ảnh dùng chung sẽ được giữ lại."
-        PresetDeleteAction.ALL_EXCEPT_SYSTEM -> "Xóa mọi preset thường, cho phép xóa playlist 249, nhưng giữ slot 100, 248, 250 và file ảnh còn được slot được giữ tham chiếu."
-    }
 }
 
 internal fun summarizePresetIds(ids: List<Int>): String {

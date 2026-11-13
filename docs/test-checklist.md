@@ -62,3 +62,15 @@
 - [ ] Tab Biên Tập: "Nạp vào playlist 249" trên mạch thật (đọc lại xác nhận, chặn preset đã mất).
 - [ ] Cài đè bản cũ trên máy thật đang có thiết bị → danh sách thiết bị còn nguyên (migration 4→5; đã có unit test).
 - [ ] Máy thật (không phải emulator): mDNS tìm thấy 2X Pro.
+
+## E. Nút "Xóa preset + ảnh" (tab Đồng Loạt ALL + Cấu Hình Mạch)
+
+Đã kiểm 2026-11-13 trên tablet Xiaomi + 2 mạch thật (preset thử 60–63, ảnh dùng chung):
+
+- [x] Mỗi tab chỉ còn 1 nút; dialog gộp preset theo ID, nhóm + chip chọn nhanh, mục ảnh thừa.
+- [x] Dialog không vượt màn tablet nằm ngang (nút Xóa luôn hiện, danh sách tự cuộn).
+- [x] Xoá 1 preset có ảnh dùng chung với preset khác → ảnh được giữ; ảnh dùng riêng → xoá.
+- [x] Tab ALL xoá song song trên các mạch, báo kết quả từng mạch; preset/ảnh không chọn còn nguyên.
+- [ ] Tích "Ảnh thừa" → xoá ảnh không preset nào dùng (đã có unit test, chưa thử trên mạch thật).
+- [ ] Mạch khoá PIN `/edit` → vẫn xoá preset, giữ ảnh, có cảnh báo.
+

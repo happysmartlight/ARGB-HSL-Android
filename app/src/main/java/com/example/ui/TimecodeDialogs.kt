@@ -91,12 +91,11 @@ import com.example.viewmodel.AddDeviceState
 import com.example.viewmodel.DeviceImageFile
 import com.example.viewmodel.FileCleanupUiState
 import com.example.viewmodel.DevicePresetStorageStats
-import com.example.viewmodel.PresetBulkDeletePreview
-import com.example.viewmodel.PresetBulkDeleteUiState
+import com.example.viewmodel.PresetPurgeItem
+import com.example.viewmodel.PresetPurgeUiState
 import com.example.viewmodel.PresetDeleteAction
 import com.example.viewmodel.PresetDeviceDeleteError
 import com.example.viewmodel.PresetDeletePreview
-import com.example.viewmodel.PresetDeleteUiState
 import com.example.viewmodel.PlaylistPlaybackState
 import com.example.viewmodel.ImageUploadMode
 import com.example.viewmodel.ImageWriteMode
@@ -113,9 +112,9 @@ import com.example.ui.theme.LocalAppDimens
 import java.text.SimpleDateFormat
 import java.util.*
 
-/** Dialog timecode rộng theo màn: tablet (Expanded) dùng ~70% bề ngang để đủ chỗ thông tin track. */
+/** Dialog rộng theo màn: tablet (Expanded) dùng ~70% bề ngang để đủ chỗ thông tin. */
 @Composable
-private fun TimecodeDialogFrame(
+internal fun TimecodeDialogFrame(
     onDismissRequest: () -> Unit,
     borderColor: Color? = null,
     content: @Composable ColumnScope.() -> Unit
@@ -126,6 +125,9 @@ private fun TimecodeDialogFrame(
         dimens.screenWidthDp >= 720 -> 0.72f
         else -> 0.92f
     }
+    // Không cao quá màn hình (tablet nằm ngang thấp): phần danh sách bên trong co lại bằng weight,
+    // để dòng tóm tắt + nút bấm luôn nhìn thấy.
+    val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.92f).dp
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -137,6 +139,7 @@ private fun TimecodeDialogFrame(
             modifier = Modifier
                 .fillMaxWidth(widthFraction)
                 .widthIn(max = 980.dp)
+                .heightIn(max = maxHeight)
         ) {
             Column(
                 modifier = Modifier.padding(dimens.cardPadding + 4.dp),
@@ -218,6 +221,7 @@ fun TimecodeMappingDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .weight(1f, fill = false)
                 .heightIn(max = if (dimens.isCompact) 380.dp else 520.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing + 2.dp)
@@ -462,6 +466,7 @@ fun TimecodeResultDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .weight(1f, fill = false)
                 .heightIn(max = if (dimens.isCompact) 360.dp else 480.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)

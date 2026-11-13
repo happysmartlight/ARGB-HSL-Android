@@ -90,12 +90,11 @@ import com.example.viewmodel.AddDeviceState
 import com.example.viewmodel.DeviceImageFile
 import com.example.viewmodel.FileCleanupUiState
 import com.example.viewmodel.DevicePresetStorageStats
-import com.example.viewmodel.PresetBulkDeletePreview
-import com.example.viewmodel.PresetBulkDeleteUiState
+import com.example.viewmodel.PresetPurgeItem
+import com.example.viewmodel.PresetPurgeUiState
 import com.example.viewmodel.PresetDeleteAction
 import com.example.viewmodel.PresetDeviceDeleteError
 import com.example.viewmodel.PresetDeletePreview
-import com.example.viewmodel.PresetDeleteUiState
 import com.example.viewmodel.PlaylistPlaybackState
 import com.example.viewmodel.ImageUploadMode
 import com.example.viewmodel.ImageWriteMode
@@ -136,8 +135,7 @@ fun DeviceControlSection(
 
     val devices by viewModel.devices.collectAsStateWithLifecycle()
     val activePresetStats by viewModel.activeDevicePresetStats.collectAsStateWithLifecycle()
-    val presetDeleteState by viewModel.presetDeleteState.collectAsStateWithLifecycle()
-    val bulkPresetDeleteState by viewModel.bulkPresetDeleteState.collectAsStateWithLifecycle()
+    val presetPurgeState by viewModel.presetPurgeState.collectAsStateWithLifecycle()
     val fileCleanupState by viewModel.fileCleanupState.collectAsStateWithLifecycle()
 
     val dimens = LocalAppDimens.current
@@ -205,16 +203,11 @@ fun DeviceControlSection(
         )
     }
 
-    PresetDeleteDialog(
-        state = presetDeleteState,
-        onConfirm = { preview -> viewModel.confirmPresetDeletion(device, preview.action) },
-        onDismiss = { viewModel.dismissPresetDeletionDialog() }
-    )
 
-    PresetBulkDeleteDialog(
-        state = bulkPresetDeleteState,
-        onConfirm = { preview -> viewModel.confirmPresetDeletionForOnlineDevices(preview.action) },
-        onDismiss = { viewModel.dismissBulkPresetDeletionDialog() }
+    PresetPurgeDialog(
+        state = presetPurgeState,
+        onConfirm = { pids, orphans -> viewModel.confirmPresetPurge(pids, orphans) },
+        onDismiss = { viewModel.dismissPresetPurge() }
     )
 
     if (fileCleanupState.isVisible) {
@@ -1035,8 +1028,8 @@ fun DeviceControlSection(
                         }
                         PresetCleanupPanel(
                             stats = activePresetStats,
-                            isBusy = presetDeleteState.isPreparing || presetDeleteState.isDeleting,
-                            onAction = { action -> viewModel.preparePresetDeletion(device, action) }
+                            isBusy = presetPurgeState.isBusy,
+                            onOpenPurge = { viewModel.openPresetPurgeForDevice(device) }
                         )
                     }
 
@@ -2710,9 +2703,9 @@ fun DeviceControlSection(
                         BulkPresetCleanupPanel(
                             devices = devices,
                             onlineStats = onlinePresetStats,
-                            isBusy = bulkPresetDeleteState.isPreparing || bulkPresetDeleteState.isDeleting,
+                            isBusy = presetPurgeState.isBusy,
                             onRefresh = { viewModel.refreshOnlineDevicePresetStats() },
-                            onAction = { action -> viewModel.preparePresetDeletionForOnlineDevices(action) }
+                            onOpenPurge = { viewModel.openPresetPurgeForOnlineDevices() }
                         )
                     }
 
