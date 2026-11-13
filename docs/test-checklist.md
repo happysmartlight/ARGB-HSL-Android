@@ -39,8 +39,8 @@
 
 ## C. Điểm thiết kế chờ xác nhận
 - [ ] Clip mặc định **5 giây** khi mới thả — ổn không?
-- [ ] Nạp 249 đang đặt **lặp vô hạn (loop)** — cần thêm tuỳ chọn chạy 1 lần?
-- [ ] **Transition mặc định = 0** — cần thêm chỉnh transition cho từng clip?
+- [x] Nạp 249 đang đặt **lặp vô hạn (loop)** — cần thêm tuỳ chọn chạy 1 lần? → đã có công tắc Lặp (mục G).
+- [x] **Transition mặc định = 0** — cần thêm chỉnh transition cho từng clip? → mặc định 0.7 s như desktop, chỉnh từng clip (mục G).
 
 ## D. Mạch 2X Pro + file timeline desktop v3.17 (recipe / MAC / pmax 1024)
 
@@ -91,3 +91,23 @@
 - [ ] Nút Nháy: mạch nháy trắng 3 lần rồi trở lại preset đang chạy.
 - [ ] Màn nhỏ (điện thoại): các phần xếp 1 cột, không vỡ.
 
+## G. Tab Biên Tập Timeline + phát playlist 249 (FW 2611103, playlist lồng)
+
+Đã kiểm 2026-11-13 trên tablet Xiaomi + 2X Pro thật (`.21`) + 4X không có 249 (`.130`), theo dõi
+`/json/state` mỗi 0.15 s:
+
+- [x] Danh sách preset: ô tìm, chip lọc theo loại (POI · 5), không hiện preset playlist.
+- [x] "Đọc 249 từ mạch": dựng lại 3 clip đúng mốc, báo ".130: không có playlist 249 — giữ nguyên track".
+- [x] Chỉnh chuyển cảnh 0.7 s + "Áp cho cả track"; dải mờ chuyển cảnh hiện ở đầu clip.
+- [x] Nạp 249: `dur [50,10,50,33,50]`, `transition [7,0,7,0,7]`, không còn đuôi OFF đệm tới 60 s; công tắc
+      Lặp ghi `repeat` 0/1 và được nhớ sau khi mở lại app.
+- [x] Phát từ đầu: mỗi bước dài đúng `dur` (5.0 / 1.0 / 5.0 / 3.3 / 5.0 s), hết 19.3 s thì tắt, `pl -1`.
+      Mạch không có 249 không bị bật đèn.
+- [x] Tạm dừng giữa preset: mạch đứng yên (trước đây tới bước kế tự chạy tiếp); Tiếp tục: phần còn lại đúng.
+- [x] Tua (chạm thước) khi đang phát: mạch nhảy đúng vị trí; phát từ playhead khi đang dừng.
+- [x] Hết playlist cắt / 249 chạy 1 lần: mạch đứng ở mục cuối, KHÔNG tự nạp lại 249 (lỗi playlist lồng).
+- [x] Lặp: mạch quay về preset đầu đúng 19.3 s, app quay vòng đồng hồ, huy hiệu "🔁 LẶP", không tự tắt.
+- [ ] Nhạc dài hơn / ngắn hơn playlist: nghe thử độ khớp nhạc–LED khi lặp và sau khi tua.
+- [ ] 2 mạch cùng có 249 (khác độ dài) → tổng theo mạch dài nhất, phát/tua cùng lúc cả 2.
+- [ ] Mạch FW cũ (2503271, không playlist lồng): tạm dừng / phát tiếp / tắt vẫn đúng.
+- [ ] Thước tab ALL ở zoom lớn (bảng tự cuộn theo playhead): chạm tua đúng giây.

@@ -984,6 +984,22 @@ fun TimelineStepItem(
 ) {
     val stepWidthFloat = step.endSecond - step.startSecond
     val stepWidth = (stepWidthFloat * pxPerSec).dp
+    if (step.presetId == com.example.data.PresetSlots.OFF) {
+        // Mục 248 = khoảng trống trên timeline (LED tối) — không vẽ như 1 hiệu ứng.
+        Box(
+            modifier = Modifier
+                .width(stepWidth)
+                .fillMaxHeight()
+                .padding(horizontal = 0.5.dp)
+                .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(4.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (stepWidthFloat * pxPerSec >= 28f) {
+                Text("OFF", style = MaterialTheme.typography.bodySmall, fontSize = 7.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+            }
+        }
+        return
+    }
     val stepHue = (step.presetId * 43) % 360
     
     val isStepActive by remember(isPlaylistRunning) {
@@ -1079,7 +1095,8 @@ fun TimelineStepItem(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "${stepWidthFloat.toInt()}s",
+                text = if (kotlin.math.abs(stepWidthFloat - Math.round(stepWidthFloat)) < 0.05f) "${Math.round(stepWidthFloat)}s"
+                    else String.format(Locale.US, "%.1fs", stepWidthFloat),
                 style = MaterialTheme.typography.bodySmall,
                 fontSize = 6.sp,
                 color = if (isStepActive) activeTextColor.copy(alpha = 0.8f) else inactiveTextColor.copy(alpha = 0.6f)

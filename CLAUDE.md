@@ -85,7 +85,15 @@ Biến ảnh → preset hình ảnh. Spec gốc: `docs/poi-preset-workflow.md`.
 ## Tab "Biên Tập Timeline" (tab 4 — index 3)
 
 Biên đạo timeline ngay trong app bằng **kéo thả** (không cần import file timecode).
-- Trên: list preset của 1 mạch (touch nhanh = phát thử preview; giữ lâu = kéo xuống track).
+- Trên: list preset của 1 mạch (touch nhanh = phát thử preview; giữ lâu = kéo xuống track). Có ô **tìm không
+  dấu** (tên/ID) + lọc loại POI / Cờ LED / Hiệu ứng (`data/TimelineEditing.kt`, có test) vì FW mới có tới
+  ~1000 preset; **không liệt kê preset playlist** (playlist lồng sẽ thay timeline đang chạy) và từ chối ghi
+  249 nếu clip trỏ tới playlist.
+- Clip đang chọn: chỉnh **thời lượng + chuyển cảnh** (bước 0.1 s, "Áp cho cả track"); chuyển cảnh mặc định
+  0.7 s như desktop, luôn ≤ thời lượng (FW chạy chuyển cảnh TRONG `dur`). Clip trỏ preset đã mất → đỏ + ⚠.
+- Công tắc **Lặp** (lưu `timeline_editor_prefs`): 249 `repeat` 0 / 1. Độ dài 249 = **clip kết thúc muộn nhất
+  của mọi mạch** (desktop `total_end`), KHÔNG theo chiều dài thước. Nút **"Đọc 249 từ mạch"** dựng lại clip từ
+  playlist trên mạch (248 = khoảng trống, công tắc Lặp theo `repeat`), chỉ thay track của mạch đọc được.
 - Dưới: bảng track kiểu DAW, mỗi mạch online = 1 lane. Chạm clip để **chọn** → viền sáng +
   handle co giãn + nút "Xóa clip" (ngoài timeline). Kéo thân = di chuyển, kéo mép = co giãn,
   có **snap** vào cạnh clip lân cận + mốc giây tròn. Chống chồng lấn ở ViewModel.
@@ -173,6 +181,26 @@ trên track thật). Luồng (`WledViewModel.prepareTimecodeImport` / `confirmTi
   thiếu 248 → tự ghi; còn lại → toast cảnh báo.
 - Phát đồng loạt: `postStateTogether` dựng request xong mới mở "cổng" gửi cùng lúc (đo trên 2
   mạch thật: lệch < 1 ms). Body `{"on":true,"seg":[{"id":0,"frz":false}],"ps":249}`.
+
+### Phát playlist 249 (tab Đồng Loạt) — `WledViewModel.startPlaylistAllWithTimeline`, `data/PlaylistTiming.kt`
+
+Đo trên 2X Pro FW 2611103 + đọc `D:\Github\ARGB-v3-SuperNova\wled00\playlist.cpp`:
+- Mỗi mục chạy đúng `dur`; **`transition` nằm TRONG `dur`** (app cũ cộng thêm → bảng/thời lượng lệch).
+  Tổng = mạch dài nhất. Mạch không có 249 → không gửi gì (gửi `ps` chỉ bật đèn hiệu ứng cũ).
+- Từ đầu = `ps 249` cùng lúc. Phát tiếp / tua / phát từ playhead = **playlist inline đã cắt** tại playhead
+  (`PlaylistTiming.slice`, port desktop `_slice_entries_at_offset`) gửi cùng lúc; tua khi đang phát: debounce
+  300 ms, vị trí cắt lấy theo đồng hồ ngay trước khi gửi. App KHÔNG gửi từng bước nữa (bỏ "biên đạo chủ động").
+- Lặp (`repeat` 0): đồng hồ + nhạc quay vòng, không tự tắt. Chạy 1 lần: hết → tắt LED. Nhạc `prepare()` trước
+  khi gửi lệnh LED rồi mới `start()`.
+- ⚠ **Playlist lồng (FW ≥ 2512040)**: nạp playlist khi đang chạy playlist khác → cái cũ thành "cha"; playlist
+  chạy 1 lần hết → **nạp lại cha ở chỗ dở**; còn cha mà đang chạy playlist → **mọi lệnh nạp playlist bị bỏ qua**
+  (kể cả `"ps":[]`); chỉ playlist `repeat` 0 xoá cha. Vì vậy (`resetPlaylistState`): trước mỗi lần phát/tua và
+  khi tạm dừng/tắt → gửi lại `fx` hiện tại của seg 0 (FW gỡ playlist mà không ghi cha, hiệu ứng không đổi) +
+  playlist "giữ" `{"ps":[0],"dur":[36000],"repeat":0}` (preset 0 = không áp gì). Playlist cắt luôn gửi
+  `repeat` 0; chạy 1 lần thì mục cuối giữ 36000 ds (KHÔNG dùng `dur` 0: FW cũ 2503271 coi 0 là nhảy mục ngay).
+- **Tạm dừng** = freeze cùng lúc rồi dừng playlist (chỉ freeze thì tới bước kế mạch nạp preset mới và tự hết
+  đóng băng). **Dừng** = `on:false` cùng lúc → dọn → `"playlist":{"ps":[]}` (pl → -1).
+- Thước tab ALL: chạm hoặc kéo để tua (chỉ khi mở khoá); `pointerInput` phải key theo `isTimelineLocked`.
 - Nhạc: Android không đọc được thư mục chứa file timeline → tự chọn nếu tên file trùng lịch sử
   nhạc, không thì dialog kết quả có nút "Chọn nhạc".
 

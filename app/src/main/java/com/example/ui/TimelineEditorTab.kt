@@ -107,6 +107,8 @@ import com.example.viewmodel.TimecodeTrackItem
 import com.example.viewmodel.TimecodeImportUiState
 import com.example.viewmodel.TimecodeUploadResult
 import com.example.ui.i18n.LocalAppStrings
+import com.example.ui.i18n.timelineStrings
+import com.example.viewmodel.EditorAction
 import com.example.ui.theme.LocalAppDimens
 import java.text.SimpleDateFormat
 import java.util.*
@@ -133,9 +135,17 @@ internal fun TimelineEditorTab(
     uploadState: EditorUploadUiState,
     onUpload: () -> Unit,
     onJumpToAllTab: () -> Unit,
-    onDismissUpload: () -> Unit
+    onDismissUpload: () -> Unit,
+    loop: Boolean,
+    onLoopChange: (Boolean) -> Unit,
+    onSetClipDuration: (deviceId: Int, clipId: Long, seconds: Float) -> Unit,
+    onSetClipTransition: (deviceId: Int, clipId: Long, seconds: Float) -> Unit,
+    onSetTrackTransition: (deviceId: Int, seconds: Float) -> Unit,
+    onRefreshPresets: (deviceId: Int) -> Unit,
+    onLoadFromDevices: () -> Unit
 ) {
     val strings = LocalAppStrings.current
+    val tls = timelineStrings()
     val density = LocalDensity.current
     val ppsPx = pxPerSec * density.density
     val onlineDevices = devices.filter { it.isOnline }
@@ -205,7 +215,12 @@ internal fun TimelineEditorTab(
                 }
             }
 
-            // ---- Danh sách preset (nguồn kéo) ----
+            // ---- Danh sách preset (nguồn kéo) — tìm + lọc loại: FW mới có tới ~1000 preset (pmax 1024) ----
+            var query by remember { mutableStateOf("") }
+            var kindFilter by remember { mutableStateOf<PresetKind?>(null) }
+            val filtered = remember(presets, query, kindFilter) {
+                presets.filter { p -> (kindFilter == null || p.kind == kindFilter) && TimelineEditing.matches(p.id, p.name, query) }
+            }
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -213,12 +228,25 @@ internal fun TimelineEditorTab(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "${strings.tlPresetsOf} ${selectedDevice?.name ?: "—"} ${strings.tlHoldDrag}",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "${strings.tlPresetsOf} ${selectedDevice?.name ?: "—"} ${strings.tlHoldDrag}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (presets.isNotEmpty()) {
+                            Text(
+                                text = "${filtered.size}/${presets.size} ${tls.presetCount}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                        IconButton(onClick = { selectedDeviceId?.let(onRefreshPresets) }, enabled = selectedDeviceId != null) {
+                            Icon(Icons.Default.Refresh, contentDescription = tls.refreshPresets, tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                     if (presets.isEmpty()) {
                         Text(
                             text = strings.tlNoPresets,
@@ -226,29 +254,62 @@ internal fun TimelineEditorTab(
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
                     } else {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            singleLine = true,
+                            placeholder = { Text(tls.searchHint) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = if (query.isNotEmpty()) ({
+                                IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, contentDescription = null) }
+                            }) else null,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        val counts = remember(presets) { presets.groupingBy { it.kind }.eachCount() }
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            presets.forEach { preset ->
-                                key(preset.id) {
+                            listOf(
+                                null to tls.filterAll,
+                                PresetKind.POI to tls.filterPoi,
+                                PresetKind.FLAG to tls.filterFlag,
+                                PresetKind.EFFECT to tls.filterEffect
+                            ).forEach { (k, label) ->
+                                val n = if (k == null) presets.size else counts[k] ?: 0
+                                if (k == null || n > 0) {
+                                    EditorFilterChip("$label · $n", selected = kindFilter == k, dot = k?.let { presetKindColor(it) }) {
+                                        kindFilter = k
+                                    }
+                                }
+                            }
+                        }
+                        if (filtered.isEmpty()) {
+                            Text(tls.noMatch, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        } else {
+                            val rows = if (filtered.size > 8) 2 else 1
+                            LazyHorizontalGrid(
+                                rows = GridCells.Fixed(rows),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth().height(if (rows == 2) 86.dp else 40.dp)
+                            ) {
+                                items(filtered, key = { it.id }) { preset ->
                                     var chipRoot by remember { mutableStateOf(Offset.Zero) }
                                     val isDraggable = !isLocked && selectedDeviceId != null
-                                    Box(
+                                    Row(
                                         modifier = Modifier
                                             .onGloballyPositioned { chipRoot = it.positionInRoot() }
                                             .clip(RoundedCornerShape(10.dp))
                                             .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f))
                                             // Touch nhanh = phát thử preset; giữ lâu = kéo xuống track.
-                                            .pointerInput(preset.id, selectedDeviceId, isLocked, pxPerSec) {
+                                            .pointerInput(preset.id, selectedDeviceId, isLocked, pxPerSec, totalSeconds) {
                                                 awaitEachGesture {
                                                     val down = awaitFirstDown(requireUnconsumed = false)
                                                     val longPress = awaitLongPressOrCancellation(down.id)
                                                     if (longPress == null) {
                                                         // Thả tay trước khi giữ lâu → tap nhanh → demo preset
-                                                        selectedDeviceId?.let { onPreviewPreset(it, preset) }
+                                                        if (!down.isConsumed) selectedDeviceId?.let { onPreviewPreset(it, preset) }
                                                     } else if (isDraggable) {
                                                         // Giữ lâu → bắt đầu kéo
                                                         dragging = preset
@@ -268,14 +329,19 @@ internal fun TimelineEditorTab(
                                                     }
                                                 }
                                             }
-                                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
+                                        Box(Modifier.size(8.dp).background(presetKindColor(preset.kind), CircleShape))
                                         Text(
                                             text = "#${preset.id}  ${preset.name}",
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            maxLines = 1
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.widthIn(max = 220.dp)
                                         )
                                     }
                                 }
@@ -320,9 +386,13 @@ internal fun TimelineEditorTab(
                 }
             }
 
-            // ---- Thanh thao tác clip đang chọn (nút xóa nằm NGOÀI timeline) ----
+            // ---- Thanh thao tác clip đang chọn (nằm NGOÀI timeline): thời lượng, chuyển cảnh, xóa ----
             val selDur = selectedClipObj?.durationSec ?: 0f
-            Row(
+            val selMissing = selectedClip?.let { (d, _) ->
+                val avail = presetsByDevice[d]
+                avail != null && selectedClipObj != null && avail.none { it.id == selectedClipObj.presetId }
+            } == true
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
@@ -331,40 +401,72 @@ internal fun TimelineEditorTab(
                         else MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
                     )
                     .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                if (selectedClipObj != null) {
-                    Text(
-                        text = "${strings.tlSelectedPrefix} #${selectedClipObj.presetId} ${selectedClipObj.presetName} · ${"%.1f".format(selectedClipObj.startSec)}s→${"%.1f".format(selectedClipObj.startSec + selDur)}s",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                } else {
-                    Text(
-                        text = strings.tlTapToSelect,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        modifier = Modifier.weight(1f)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectedClipObj != null) {
+                        Text(
+                            text = "${strings.tlSelectedPrefix} #${selectedClipObj.presetId} ${selectedClipObj.presetName} · ${"%.1f".format(selectedClipObj.startSec)}s→${"%.1f".format(selectedClipObj.startSec + selDur)}s",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        Text(
+                            text = strings.tlTapToSelect,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            selectedClip?.let { (d, id) -> onRemoveClip(d, id) }
+                            selectedClip = null
+                        },
+                        enabled = selectedClipObj != null && !isLocked,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onError)
+                        Spacer(Modifier.width(4.dp))
+                        Text(strings.tlDeleteClip, color = MaterialTheme.colorScheme.onError)
+                    }
                 }
-                Button(
-                    onClick = {
-                        selectedClip?.let { (d, id) -> onRemoveClip(d, id) }
-                        selectedClip = null
-                    },
-                    enabled = selectedClipObj != null && !isLocked,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    contentPadding = PaddingValues(horizontal = 12.dp)
-                ) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onError)
-                    Spacer(Modifier.width(4.dp))
-                    Text(strings.tlDeleteClip, color = MaterialTheme.colorScheme.onError)
+                if (selectedClipObj != null) {
+                    val (selDev, selId) = selectedClip!!
+                    if (selMissing) {
+                        Text(tls.missingPreset, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SecondsStepper(
+                            label = tls.duration,
+                            value = selDur,
+                            min = 0.2f,
+                            max = 3600f,
+                            enabled = !isLocked
+                        ) { onSetClipDuration(selDev, selId, it) }
+                        SecondsStepper(
+                            label = tls.transition,
+                            value = selectedClipObj.transitionSec,
+                            min = 0f,
+                            max = selDur,
+                            enabled = !isLocked
+                        ) { onSetClipTransition(selDev, selId, it) }
+                        TextButton(
+                            onClick = { onSetTrackTransition(selDev, selectedClipObj.transitionSec) },
+                            enabled = !isLocked
+                        ) { Text(tls.applyToTrack, style = MaterialTheme.typography.labelMedium) }
+                    }
+                    Text(tls.transitionHint, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 }
             }
 
@@ -526,6 +628,7 @@ internal fun TimelineEditorTab(
                                     if (layout.isNotEmpty()) onApplyLayout(dev.id, layout)
                                 }
 
+                                val availableIds = presetsByDevice[dev.id]?.map { it.id }?.toHashSet()
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -555,6 +658,8 @@ internal fun TimelineEditorTab(
                                             val wp = widStates.getOrPut(clip.id) { mutableFloatStateOf((clip.durationSec * ppsPx).coerceAtLeast(minClipWidthPx)) }
                                             EditorClipBlock(
                                                 clip = clip,
+                                                isMissing = availableIds != null && clip.presetId !in availableIds,
+                                                transitionPx = clip.transitionSec * ppsPx,
                                                 isLocked = isLocked,
                                                 isSelected = selectedClip == (dev.id to clip.id),
                                                 startPxState = sp,
@@ -574,11 +679,71 @@ internal fun TimelineEditorTab(
                 }
             }
 
+            // ---- Lặp / độ dài thật của playlist sẽ ghi ----
+            val contentEnd = clipsByDevice.values.flatten().maxOfOrNull { it.startSec + it.durationSec } ?: 0f
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
+                    .clickable { onLoopChange(!loop) }
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Switch(checked = loop, onCheckedChange = onLoopChange)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(tls.loop, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (loop) tls.loopOnHint else tls.loopOffHint,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+                Text(
+                    text = "${tls.lengthLabel} ${"%.1f".format(contentEnd)} s",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
             // ---- Hành động ----
+            var confirmLoad by remember { mutableStateOf(false) }
+            if (confirmLoad) {
+                AlertDialog(
+                    onDismissRequest = { confirmLoad = false },
+                    title = { Text(tls.loadConfirmTitle) },
+                    text = { Text(tls.loadConfirmBody) },
+                    confirmButton = {
+                        Button(onClick = { confirmLoad = false; selectedClip = null; onLoadFromDevices() }) { Text(tls.loadConfirmOk) }
+                    },
+                    dismissButton = { TextButton(onClick = { confirmLoad = false }) { Text(tls.cancel) } }
+                )
+            }
+            val busy = uploadState.isRunning
+            val loadingNow = busy && uploadState.action == EditorAction.LOAD
+            val uploadingNow = busy && uploadState.action == EditorAction.UPLOAD
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                OutlinedButton(
+                    onClick = { if (clipsByDevice.values.any { it.isNotEmpty() }) confirmLoad = true else onLoadFromDevices() },
+                    enabled = !busy && !isLocked,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.height(46.dp)
+                ) {
+                    if (loadingNow) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(tls.loading, fontWeight = FontWeight.Bold)
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(tls.loadFromDevices, fontWeight = FontWeight.Bold)
+                    }
+                }
                 if (selectedDeviceId != null && (clipsByDevice[selectedDeviceId]?.isNotEmpty() == true)) {
                     OutlinedButton(
                         onClick = { onClearDevice(selectedDeviceId) },
@@ -592,11 +757,11 @@ internal fun TimelineEditorTab(
                 }
                 Button(
                     onClick = onUpload,
-                    enabled = !uploadState.isRunning,
+                    enabled = !busy,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f).height(46.dp)
                 ) {
-                    if (uploadState.isRunning) {
+                    if (uploadingNow) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                         Spacer(Modifier.width(8.dp))
                         Text(strings.tlUploading, fontWeight = FontWeight.Bold)
@@ -627,6 +792,11 @@ internal fun TimelineEditorTab(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            if (uploadState.action == EditorAction.LOAD) tls.loadResultTitle else tls.uploadResultTitle,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
                         uploadState.error?.let {
                             Text("${strings.errorPrefix} $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                         }
@@ -706,6 +876,8 @@ internal fun EditorRuler(totalSeconds: Int, pxPerSec: Float, height: androidx.co
 @Composable
 internal fun EditorClipBlock(
     clip: TimelineClip,
+    isMissing: Boolean = false,
+    transitionPx: Float = 0f,
     isLocked: Boolean,
     isSelected: Boolean,
     startPxState: MutableFloatState,
@@ -731,10 +903,27 @@ internal fun EditorClipBlock(
             .clip(RoundedCornerShape(5.dp))
             .background(
                 androidx.compose.ui.graphics.Brush.verticalGradient(
-                    if (isSelected) listOf(Color(0xFF00E0FF), Color(0xFFB36BFF))
-                    else listOf(Color(0xFF00B0FF), Color(0xFF8B5CF6))
+                    when {
+                        isMissing -> listOf(Color(0xFFFF5252), Color(0xFF8E0000))
+                        isSelected -> listOf(Color(0xFF00E0FF), Color(0xFFB36BFF))
+                        else -> listOf(Color(0xFF00B0FF), Color(0xFF8B5CF6))
+                    }
                 )
             )
+            // Chuyển cảnh (nằm TRONG clip): dải sáng mờ dần ở đầu clip.
+            .drawBehind {
+                val w = transitionPx.coerceIn(0f, size.width)
+                if (w >= 1f) {
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            listOf(Color.White.copy(alpha = 0.45f), Color.White.copy(alpha = 0f)),
+                            startX = 0f,
+                            endX = w
+                        ),
+                        size = androidx.compose.ui.geometry.Size(w, size.height)
+                    )
+                }
+            }
             .then(
                 if (isSelected) Modifier.border(2.dp, Color.White, RoundedCornerShape(5.dp))
                 else Modifier
@@ -752,7 +941,7 @@ internal fun EditorClipBlock(
             )
     ) {
         Text(
-            text = clip.presetName,
+            text = if (isMissing) "⚠ ${clip.presetName}" else clip.presetName,
             style = MaterialTheme.typography.labelSmall,
             fontSize = 8.5.sp,
             fontWeight = FontWeight.Bold,
@@ -794,6 +983,66 @@ internal fun EditorClipBlock(
                     }
                 }
             }
+        }
+    }
+}
+
+internal fun presetKindColor(kind: PresetKind): Color = when (kind) {
+    PresetKind.POI -> Color(0xFFFF9100)
+    PresetKind.FLAG -> Color(0xFF00C853)
+    PresetKind.EFFECT -> Color(0xFF00B0FF)
+    PresetKind.PLAYLIST -> Color(0xFF9E9E9E)
+}
+
+@Composable
+private fun EditorFilterChip(text: String, selected: Boolean, dot: Color?, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        modifier = Modifier
+            .clip(shape)
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent)
+            .border(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        if (dot != null) Box(Modifier.size(8.dp).background(dot, CircleShape))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+/** Ô số giây (bước 0.1 s) với nút −/+; gõ trực tiếp được. */
+@Composable
+private fun SecondsStepper(label: String, value: Float, min: Float, max: Float, enabled: Boolean, onValue: (Float) -> Unit) {
+    fun clamp(v: Float) = (Math.round(v * 10f) / 10f).coerceIn(min, maxOf(min, max))
+    var text by remember(value) { mutableStateOf("%.1f".format(Locale.US, value)) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        IconButton(onClick = { onValue(clamp(value - 0.1f)) }, enabled = enabled && value > min + 0.001f) {
+            Text("−", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        }
+        OutlinedTextField(
+            value = text,
+            onValueChange = { t ->
+                val cleaned = t.replace(',', '.').filter { it.isDigit() || it == '.' }.take(6)
+                text = cleaned
+                cleaned.toFloatOrNull()?.let { if (it in min..maxOf(min, max)) onValue(clamp(it)) }
+            },
+            enabled = enabled,
+            singleLine = true,
+            suffix = { Text("s", style = MaterialTheme.typography.labelSmall) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            textStyle = MaterialTheme.typography.bodyMedium.copy(textAlign = TextAlign.Center, fontWeight = FontWeight.Bold),
+            modifier = Modifier.widthIn(min = 72.dp, max = 96.dp)
+        )
+        IconButton(onClick = { onValue(clamp(value + 0.1f)) }, enabled = enabled && value < max - 0.001f) {
+            Text("+", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
     }
 }

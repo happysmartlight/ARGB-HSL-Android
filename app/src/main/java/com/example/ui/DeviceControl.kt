@@ -1049,6 +1049,8 @@ fun DeviceControlSection(
                         val activeStepsMap by viewModel.activeStepsMap.collectAsStateWithLifecycle()
                         val isTimelineLocked by viewModel.isTimelineLocked.collectAsStateWithLifecycle()
                         val isChoreographyMode by viewModel.isChoreographyMode.collectAsStateWithLifecycle()
+                        val playlistLoop by viewModel.playlistLoop.collectAsStateWithLifecycle()
+                        val tls = com.example.ui.i18n.timelineStrings()
                         val onlinePresetStats by viewModel.onlineDevicePresetStats.collectAsStateWithLifecycle()
                         val selectedAudioName by viewModel.selectedAudioName.collectAsStateWithLifecycle()
                         val selectedAudioUri by viewModel.selectedAudioUri.collectAsStateWithLifecycle()
@@ -2076,7 +2078,7 @@ fun DeviceControlSection(
                                                                     .fillMaxWidth()
                                                                     .height(24.dp)
                                                                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
-                                                                    .pointerInput(playlistTotalSeconds, pxPerSec) {
+                                                                    .pointerInput(playlistTotalSeconds, pxPerSec, isTimelineLocked) {
                                                                         detectDragGestures(
                                                                             onDragStart = { offset ->
                                                                                 if (!isTimelineLocked) {
@@ -2099,6 +2101,10 @@ fun DeviceControlSection(
                                                                                 }
                                                                             }
                                                                         )
+                                                                    }
+                                                                    // Chạm 1 cái trên thước cũng tua (trước chỉ bắt kéo).
+                                                                    .pointerInput(playlistTotalSeconds, pxPerSec, isTimelineLocked) {
+                                                                        detectTapGestures { offset -> seekAction(offset.x) }
                                                                     }
                                                             ) {
                                                                 // Finer labels: the more you zoom in, the smaller the step between
@@ -2176,7 +2182,7 @@ fun DeviceControlSection(
                                                                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                                                                         shape = RoundedCornerShape(6.dp)
                                                                     )
-                                                                    .pointerInput(playlistTotalSeconds, pxPerSec) {
+                                                                    .pointerInput(playlistTotalSeconds, pxPerSec, isTimelineLocked) {
                                                                         detectDragGestures(
                                                                             onDragStart = { offset ->
                                                                                 if (!isTimelineLocked) {
@@ -2200,7 +2206,7 @@ fun DeviceControlSection(
                                                                             }
                                                                         )
                                                                     }
-                                                                    .pointerInput(playlistTotalSeconds, pxPerSec) {
+                                                                    .pointerInput(playlistTotalSeconds, pxPerSec, isTimelineLocked) {
                                                                         detectTapGestures { offset ->
                                                                             seekAction(offset.x)
                                                                         }
@@ -2500,7 +2506,18 @@ fun DeviceControlSection(
                                                     Text("$playlistStepsCount ${strings.stepsUnit}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
                                                 }
                                             }
-                                            // Dynamic active mode badge (Choreography vs Native PL 249)
+                                            Badge(
+                                                containerColor = if (playlistLoop) Color(0xFF7C4DFF) else MaterialTheme.colorScheme.surfaceVariant,
+                                                contentColor = if (playlistLoop) Color.White else MaterialTheme.colorScheme.onSurface
+                                            ) {
+                                                Text(
+                                                    text = if (playlistLoop) tls.allLoopBadge else tls.allOnceBadge,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontWeight = FontWeight.Black,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                            // Chế độ: playlist 249 chạy trên mạch / phát tiếp từ playhead (playlist cắt)
                                             Badge(
                                                 containerColor = if (isChoreographyMode) Color(0xFFFF9100) else Color(0xFF00B0FF),
                                                 contentColor = Color.Black
@@ -2607,10 +2624,10 @@ fun DeviceControlSection(
                                         }
 
                                         Text(
-                                            text = strings.dcAutoOffWarning,
+                                            text = if (playlistLoop) tls.allLoopWarning else strings.dcAutoOffWarning,
                                             style = MaterialTheme.typography.bodySmall,
                                             fontWeight = FontWeight.Black,
-                                            color = Color(0xFFD50000),
+                                            color = if (playlistLoop) Color(0xFF7C4DFF) else Color(0xFFD50000),
                                             fontSize = 11.sp,
                                             textAlign = TextAlign.Center,
                                             modifier = Modifier.fillMaxWidth()
@@ -2770,6 +2787,7 @@ fun DeviceControlSection(
                         val editorPresets by viewModel.editorPresets.collectAsStateWithLifecycle()
                         val editorTotalSeconds by viewModel.editorTotalSeconds.collectAsStateWithLifecycle()
                         val editorUploadState by viewModel.editorUploadState.collectAsStateWithLifecycle()
+                        val editorLoop by viewModel.editorLoop.collectAsStateWithLifecycle()
                         val isTimelineLockedEditor by viewModel.isTimelineLocked.collectAsStateWithLifecycle()
                         TimelineEditorTab(
                             devices = devices,
@@ -2793,13 +2811,20 @@ fun DeviceControlSection(
                             uploadState = editorUploadState,
                             onUpload = {
                                 // Chỉ NẠP vào playlist 249, không tự chạy. Chạy ở tab Đồng Loạt (All).
-                                viewModel.compileAndUploadEditorTimelines(loop = true)
+                                viewModel.compileAndUploadEditorTimelines(loop = editorLoop)
                             },
                             onJumpToAllTab = {
                                 viewModel.setSelectedTab(1)
                                 pendingJumpToTimeline = true
                             },
-                            onDismissUpload = { viewModel.dismissEditorUpload() }
+                            onDismissUpload = { viewModel.dismissEditorUpload() },
+                            loop = editorLoop,
+                            onLoopChange = { viewModel.setEditorLoop(it) },
+                            onSetClipDuration = { d, id, sec -> viewModel.resizeClip(d, id, sec) },
+                            onSetClipTransition = { d, id, sec -> viewModel.setClipTransition(d, id, sec) },
+                            onSetTrackTransition = { d, sec -> viewModel.setDeviceTransition(d, sec) },
+                            onRefreshPresets = { id -> devices.find { it.id == id }?.let { viewModel.fetchEditorPresets(it) } },
+                            onLoadFromDevices = { viewModel.loadEditorFromDevices() }
                         )
                     }
                 }

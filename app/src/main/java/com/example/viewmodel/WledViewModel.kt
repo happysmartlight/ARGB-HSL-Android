@@ -391,6 +391,16 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private val _editorUploadState = MutableStateFlow(EditorUploadUiState())
     val editorUploadState: StateFlow<EditorUploadUiState> = _editorUploadState.asStateFlow()
 
+    private val editorPrefs = application.getSharedPreferences("timeline_editor_prefs", android.content.Context.MODE_PRIVATE)
+    private val _editorLoop = MutableStateFlow(editorPrefs.getBoolean("loop", true))
+    /** Playlist 249 ghi từ tab Biên Tập: lặp vô hạn (`repeat` 0) hay chạy 1 lần (`repeat` 1). */
+    val editorLoop: StateFlow<Boolean> = _editorLoop.asStateFlow()
+
+    fun setEditorLoop(loop: Boolean) {
+        _editorLoop.value = loop
+        editorPrefs.edit().putBoolean("loop", loop).apply()
+    }
+
     private var nextEditorClipId = 1L
     // Thời lượng clip tối thiểu trên timeline (giây) — cho phép thu nhỏ "hết cỡ".
     private val EDITOR_MIN_CLIP_SEC = 0.2f
@@ -416,7 +426,6 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        loadAudioPreferences()
         loadEditorClipsFromDb()
         seedMockDeviceForDebug()
     }
@@ -583,6 +592,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshAllDevices() {
         // Quét lại danh sách → mọi mạch phải đối chiếu preset lại trước lần Phát sau (§5.1).
         verifiedIps.clear()
+        markTimelinesDirty()
         viewModelScope.launch {
             _isRefreshing.value = true
             devices.value.forEach { device ->
@@ -1430,25 +1440,32 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun runPlaylistAllNow(playlistId: Int) {
         playlistFreezeJob?.join()
-        val freezeSummary = setFreezeAllOnlineDevices(false)
-        logFreezeWarningIfNeeded(freezeSummary, "Chuẩn bị chạy playlist $playlistId")
-
         // §5.4: dựng lệnh cho mọi mạch trước, rồi gửi CÙNG 1 THỜI ĐIỂM (trước đây gửi lần lượt
-        // làm mạch sau chậm 50–300 ms).
+        // làm mạch sau chậm 50–300 ms). `frz:false` trong lệnh đã gỡ đóng băng — không cần GET+POST riêng.
         // Chỉ mạch đang online: mạch mất kết nối không phát được mà còn làm chậm phần báo kết quả.
-        val targets = devices.value.filter { it.isOnline }
+        val timelines = _devicesTimelines.value.takeIf { timelinesPlaylistId == playlistId }.orEmpty()
+        val (skipped, targets) = devices.value.filter { it.isOnline }.partition { timelines[it.id]?.noPlaylist == true }
+        if (skipped.isNotEmpty()) log("Phát playlist $playlistId: bỏ qua ${skipped.joinToString { it.name }} (mạch chưa có playlist $playlistId).", "WARN")
         if (targets.isEmpty()) return
+        // Dọn playlist cha còn sót (xem resetPlaylistState) — song song, trước vạch xuất phát, không đổi khung hình.
+        resetPlaylistStates(targets.map { it.ipAddress })
         val body = "{\"on\":true,\"seg\":[{\"id\":0,\"frz\":false}],\"ps\":$playlistId}"
-        val pending = postStateTogether(targets.map { it.ipAddress }, body)
+        reportTogether("Phát playlist $playlistId", targets, postStateTogether(targets.map { it.ipAddress }, body))
+    }
 
-        // Lệnh đã gửi → trả về ngay để nhạc bắt đầu cùng LED; báo cáo kết quả chạy nền.
+    /** Lệnh đã gửi → trả về ngay để nhạc bắt đầu cùng LED; báo kết quả (độ lệch, mạch lỗi) chạy nền. */
+    private fun reportTogether(
+        label: String,
+        targets: List<WledDevice>,
+        pending: Map<String, kotlinx.coroutines.Deferred<Result<Long>>>
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             val results = pending.mapValues { it.value.await() }
             val sentAt = results.values.mapNotNull { it.getOrNull() }
             if (sentAt.size >= 2) {
                 val spreadMs = (sentAt.max() - sentAt.min()) / 1_000_000.0
                 log(
-                    "Phát playlist $playlistId đồng loạt ${sentAt.size} mạch — lệch thời điểm gửi " +
+                    "$label đồng loạt ${sentAt.size} mạch — lệch thời điểm gửi " +
                         String.format(java.util.Locale.US, "%.2f", spreadMs) + " ms",
                     "INFO"
                 )
@@ -1460,8 +1477,8 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                         device.copy(isOn = true, isOnline = true, lastSeenTimestamp = System.currentTimeMillis())
                     )
                 } else {
-                    android.util.Log.e("WledViewModel", "Error running playlist $playlistId for ${device.ipAddress}", r.exceptionOrNull())
-                    if (device.isOnline) log("Không gửi được lệnh Phát tới ${device.name}: ${r.exceptionOrNull()?.message}", "WARN")
+                    android.util.Log.e("WledViewModel", "$label: lỗi gửi tới ${device.ipAddress}", r.exceptionOrNull())
+                    log("$label: không gửi được tới ${device.name}: ${r.exceptionOrNull()?.message}", "WARN")
                 }
             }
         }
@@ -1504,7 +1521,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                     val uri = android.net.Uri.parse(savedUriStr)
                     _selectedAudioUri.value = uri
                     _selectedAudioName.value = savedName
-                    _playlistTotalSeconds.value = savedDur
+                    audioDurationSeconds = savedDur; refreshPlaylistTotal()
                 } catch (e: Exception) {
                     android.util.Log.e("WledViewModel", "Error loading saved active audio", e)
                 }
@@ -1579,7 +1596,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     fun setCustomAudio(uri: android.net.Uri?, name: String, durationSeconds: Int) {
         _selectedAudioUri.value = uri
         _selectedAudioName.value = name
-        _playlistTotalSeconds.value = durationSeconds
+        audioDurationSeconds = durationSeconds; refreshPlaylistTotal()
         if (uri != null) {
             val uriStr = uri.toString()
             saveActiveAudio(uriStr, name, durationSeconds)
@@ -1596,7 +1613,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     fun clearCustomAudio() {
         _selectedAudioUri.value = android.net.Uri.parse("android.resource://" + getApplication<Application>().packageName + "/" + com.example.R.raw.default_audio)
         _selectedAudioName.value = "Giai Điệu Vui Vẻ (Mặc định)"
-        _playlistTotalSeconds.value = 60
+        audioDurationSeconds = 60; refreshPlaylistTotal()
         clearActiveAudioPref()
         if (_isPlaylistRunning.value) {
             stopAudio()
@@ -1606,46 +1623,60 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun playAudio() {
         stopAudio()
-        val uri = _selectedAudioUri.value
-        if (uri == null) {
+        startAudio(prepareAudio(_playlistElapsedSeconds.value))
+    }
+
+    /** Bắt đầu nhạc đã chuẩn bị (null = không có / lỗi → nhịp synth). */
+    private fun startAudio(prepared: android.media.MediaPlayer?) {
+        stopAudio()
+        if (prepared == null) {
             startSynthPulseLoop()
-        } else {
-            try {
-                mediaPlayer = android.media.MediaPlayer().apply {
-                    val uriString = uri.toString()
-                    if (uriString.contains("default_audio") || uri.scheme == "android.resource") {
-                        var afd: android.content.res.AssetFileDescriptor? = null
-                        try {
-                            afd = getApplication<Application>().resources.openRawResourceFd(com.example.R.raw.default_audio)
-                            setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                            prepare()
-                        } catch (inner: Exception) {
-                            android.util.Log.e("WledViewModel", "Error playing default_audio via FD, trying direct URI resolver", inner)
-                            try {
-                                reset()
-                                setDataSource(getApplication(), uri)
-                                prepare()
-                            } catch (fallbackEx: Exception) {
-                                android.util.Log.e("WledViewModel", "Error in fallback URI solver", fallbackEx)
-                                throw fallbackEx
-                            }
-                        } finally {
-                            try {
-                                afd?.close()
-                            } catch (closeEx: Exception) {}
-                        }
-                    } else {
-                        setDataSource(getApplication(), uri)
+            return
+        }
+        mediaPlayer = prepared
+        try {
+            prepared.start()
+        } catch (e: Exception) {
+            android.util.Log.e("WledViewModel", "Lỗi phát nhạc", e)
+        }
+    }
+
+    /** Tạo + prepare + seek MediaPlayer tới [offsetSec] (chưa phát). Null nếu không có nhạc hoặc lỗi. */
+    private fun prepareAudio(offsetSec: Float): android.media.MediaPlayer? {
+        val uri = _selectedAudioUri.value ?: return null
+        return try {
+            android.media.MediaPlayer().apply {
+                val uriString = uri.toString()
+                if (uriString.contains("default_audio") || uri.scheme == "android.resource") {
+                    var afd: android.content.res.AssetFileDescriptor? = null
+                    try {
+                        afd = getApplication<Application>().resources.openRawResourceFd(com.example.R.raw.default_audio)
+                        setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
                         prepare()
+                    } catch (inner: Exception) {
+                        android.util.Log.e("WledViewModel", "Error playing default_audio via FD, trying direct URI resolver", inner)
+                        try {
+                            reset()
+                            setDataSource(getApplication(), uri)
+                            prepare()
+                        } catch (fallbackEx: Exception) {
+                            android.util.Log.e("WledViewModel", "Error in fallback URI solver", fallbackEx)
+                            throw fallbackEx
+                        }
+                    } finally {
+                        try {
+                            afd?.close()
+                        } catch (closeEx: Exception) {}
                     }
-                    val currentOffsetMs = (_playlistElapsedSeconds.value * 1000).toInt()
-                    seekTo(currentOffsetMs)
-                    start()
+                } else {
+                    setDataSource(getApplication(), uri)
+                    prepare()
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("WledViewModel", "Lỗi khởi động nhạc gốc", e)
-                startSynthPulseLoop()
+                seekTo((offsetSec * 1000).toInt())
             }
+        } catch (e: Exception) {
+            android.util.Log.e("WledViewModel", "Lỗi khởi động nhạc gốc", e)
+            null
         }
     }
 
@@ -1728,8 +1759,6 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeStepsMap = MutableStateFlow<Map<Int, ActiveStepDetails>>(emptyMap())
     val activeStepsMap: StateFlow<Map<Int, ActiveStepDetails>> = _activeStepsMap.asStateFlow()
 
-    private val lastSentPresetMap = java.util.concurrent.ConcurrentHashMap<Int, Int>()
-
     private val _isLoadingTimelines = MutableStateFlow(false)
     val isLoadingTimelines: StateFlow<Boolean> = _isLoadingTimelines.asStateFlow()
 
@@ -1768,205 +1797,131 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private var playlistTimelineJob: kotlinx.coroutines.Job? = null
     private var playlistFreezeJob: kotlinx.coroutines.Job? = null
 
-    /**
-     * Fetch timelines for all online WLED devices and calculate aggregated total duration.
-     */
+    // ---------------------------------------------------------------------------
+    // Phát playlist đồng loạt (port desktop `play_saved_slot` / `_play_from_playhead`).
+    //
+    // Đo trên 2X Pro FW 2611103:
+    //  - mỗi mục playlist chạy đúng `dur`; `transition` nằm TRONG `dur` (trước đây app cộng thêm → lệch);
+    //  - freeze seg KHÔNG dừng playlist: tới bước kế mạch nạp preset mới và tự hết đóng băng;
+    //    `"playlist":{"ps":[]}` dừng hẳn playlist (pl → -1) mà không nạp lại preset.
+    // Phát từ đầu = `ps 249` cùng lúc. Phát tiếp / tua = playlist inline cắt tại playhead
+    // (`PlaylistTiming.slice`) gửi cùng lúc — mạch tự chạy, app không gửi từng bước nữa.
+    // ---------------------------------------------------------------------------
+
+    /** Chiều dài phát (giây, chính xác) = mạch dài nhất; 0 = chưa đọc được playlist nào. */
+    private var playbackCycleSeconds = 0.0
+    private var playbackLoop = false
+    private val _playlistLoop = MutableStateFlow(false)
+    /** Playlist 249 trên mạch lặp vô hạn (`repeat` 0) → bảng timeline quay vòng, không tự tắt LED. */
+    val playlistLoop: StateFlow<Boolean> = _playlistLoop.asStateFlow()
+    private var audioDurationSeconds = 60
+    private var timelinesDirty = true
+    private var timelinesPlaylistId = -1
+    private var activePlaylistId = PresetSlots.PLAYLIST
+    private var seekResendJob: kotlinx.coroutines.Job? = null
+    /** `SystemClock.elapsedRealtime()` ứng với giây 0 của timeline. */
+    private var playClockBaseMs = 0L
+
+    private fun clockSeconds(): Double = (android.os.SystemClock.elapsedRealtime() - playClockBaseMs) / 1000.0
+
+    private fun setClockAt(seconds: Double) {
+        playClockBaseMs = android.os.SystemClock.elapsedRealtime() - (seconds * 1000).toLong()
+    }
+
+    /** Tổng thời gian hiển thị: playlist dài nhất trên mạch, chưa có thì theo độ dài nhạc. */
+    private fun refreshPlaylistTotal() {
+        _playlistTotalSeconds.value =
+            if (playbackCycleSeconds > 0) kotlin.math.ceil(playbackCycleSeconds - 1e-6).toInt().coerceAtLeast(1)
+            else audioDurationSeconds.coerceAtLeast(1)
+    }
+
+    /** Playlist (hoặc presets.json) trên mạch vừa đổi → lần Phát sau phải đọc lại. */
+    private fun markTimelinesDirty() {
+        timelinesDirty = true
+    }
+
+    /** Đọc playlist [playlistId] của mọi mạch online (song song) → bảng timeline + tổng thời gian. */
     fun fetchTimelinesForAllDevices(playlistId: Int) {
-        viewModelScope.launch {
-            _isLoadingTimelines.value = true
-            val onlineDevices = devices.value.filter { it.isOnline }
-            val newTimelines = mutableMapOf<Int, DevicePlaylistTimeline>()
-            
-            // Fetch in parallel
-            val jobs = onlineDevices.map { device ->
-                launch {
-                    val timeline = fetchSingleDeviceTimeline(device, playlistId)
-                    synchronized(newTimelines) {
-                        newTimelines[device.id] = timeline
-                    }
-                }
-            }
-            
-            // Wait for all jobs to complete or timeout
-            jobs.forEach { it.join() }
-            
-            _devicesTimelines.value = newTimelines
+        viewModelScope.launch { loadTimelines(playlistId) }
+    }
+
+    private suspend fun loadTimelines(playlistId: Int): Map<Int, DevicePlaylistTimeline> {
+        _isLoadingTimelines.value = true
+        try {
+            val online = devices.value.filter { it.isOnline }
+            val loaded = online.map { d ->
+                viewModelScope.async { d.id to fetchSingleDeviceTimeline(d, playlistId) }
+            }.awaitAll().toMap()
+            _devicesTimelines.value = loaded
+            timelinesPlaylistId = playlistId
+            timelinesDirty = false
+            applyTimelineSummary(loaded.values, playlistId)
+            return loaded
+        } finally {
             _isLoadingTimelines.value = false
-            
-            // Auto calculate maximum duration to set as default total playlist seconds
-            val maxDur = newTimelines.values
-                .filter { it.isLoaded && it.totalSeconds > 0 }
-                .maxOfOrNull { it.totalSeconds }
-            if (maxDur != null && maxDur > 0) {
-                _playlistTotalSeconds.value = maxDur
-            }
         }
     }
 
-    private suspend fun fetchSingleDeviceTimeline(device: WledDevice, playlistId: Int): DevicePlaylistTimeline = withContext(Dispatchers.IO) {
+    private fun applyTimelineSummary(timelines: Collection<DevicePlaylistTimeline>, playlistId: Int) {
+        val playable = timelines.filter { it.isLoaded && it.playSeconds > 0 }
+        playbackCycleSeconds = playable.maxOfOrNull { it.playSeconds } ?: 0.0
+        playbackLoop = playable.any { it.loop }
+        _playlistLoop.value = playbackLoop
+        _playlistName.value = (playable.firstOrNull() ?: timelines.firstOrNull { it.isLoaded })?.playlistName
+            ?: "Playlist $playlistId"
+        _playlistStepsCount.value = playable.maxOfOrNull { tl -> tl.steps.count { it.presetId != PresetSlots.OFF } } ?: 0
+        refreshPlaylistTotal()
+        if (!_isPlaylistRunning.value) updateActiveSteps(_playlistElapsedSeconds.value)
+    }
+
+    private suspend fun fetchSingleDeviceTimeline(device: WledDevice, playlistId: Int): DevicePlaylistTimeline {
+        fun fail(msg: String) = DevicePlaylistTimeline(
+            deviceId = device.id, deviceName = device.name, playlistId = playlistId, playlistName = "N/A",
+            steps = emptyList(), totalSeconds = 0, isLoaded = false, error = msg
+        )
         if (MockDevice.isMock(device.ipAddress)) {
-            return@withContext DevicePlaylistTimeline(
-                deviceId = device.id,
-                deviceName = device.name,
-                playlistId = playlistId,
-                playlistName = "Mock",
-                steps = emptyList(),
-                totalSeconds = 0,
-                isLoaded = true
+            return DevicePlaylistTimeline(
+                deviceId = device.id, deviceName = device.name, playlistId = playlistId, playlistName = "Mock",
+                steps = emptyList(), totalSeconds = 0, isLoaded = true
             )
         }
-        val url = "http://${device.ipAddress}/presets.json"
-        try {
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            val request = okhttp3.Request.Builder().url(url).build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext DevicePlaylistTimeline(
-                        deviceId = device.id,
-                        deviceName = device.name,
-                        playlistId = playlistId,
-                        playlistName = "N/A",
-                        steps = emptyList(),
-                        totalSeconds = 0,
-                        isLoaded = false,
-                        error = "HTTP Lỗi ${response.code}"
-                    )
-                }
-                val bodyString = response.body?.string() ?: throw Exception("Empty body")
-                
-                val moshi = com.squareup.moshi.Moshi.Builder().build()
-                val mapType = com.squareup.moshi.Types.newParameterizedType(
-                    Map::class.java,
-                    String::class.java,
-                    Any::class.java
-                )
-                val adapter = moshi.adapter<Map<String, Any>>(mapType)
-                val allPresets = adapter.fromJson(bodyString) ?: throw Exception("JSON Error")
-                
-                val presetData = allPresets[playlistId.toString()] as? Map<*, *>
-                if (presetData == null) {
-                    return@withContext DevicePlaylistTimeline(
-                        deviceId = device.id,
-                        deviceName = device.name,
-                        playlistId = playlistId,
-                        playlistName = "N/A",
-                        steps = emptyList(),
-                        totalSeconds = 0,
-                        isLoaded = false,
-                        error = "Không có Playlist ID $playlistId"
-                    )
-                }
-                
-                val name = presetData["n"] as? String ?: "Preset $playlistId"
-                val playlistMap = presetData["playlist"] as? Map<*, *>
-                if (playlistMap == null) {
-                    // Falls back to showing as static preset step
-                    val singleName = presetData["n"] as? String ?: "Preset Tĩnh $playlistId"
-                    return@withContext DevicePlaylistTimeline(
-                        deviceId = device.id,
-                        deviceName = device.name,
-                        playlistId = playlistId,
-                        playlistName = singleName,
-                        steps = listOf(
-                            DevicePlaylistStep(
-                                presetId = playlistId,
-                                presetName = singleName,
-                                durationSeconds = 120f,
-                                transitionSeconds = 0f,
-                                startSecond = 0f,
-                                endSecond = 120f
-                            )
-                        ),
-                        totalSeconds = 120,
-                        isLoaded = true
-                    )
-                }
-                
-                val ps = playlistMap["ps"] as? List<*> ?: emptyList<Any>()
-                val dur = playlistMap["dur"] as? List<*> ?: emptyList<Any>()
-                val transition = playlistMap["transition"] as? List<*> ?: emptyList<Any>()
-                val repeat = (playlistMap["repeat"] as? Number)?.toInt() ?: 1
-                
-                val parsedSteps = mutableListOf<DevicePlaylistStep>()
-                var currentStart = 0f
-                
-                for (i in ps.indices) {
-                    val pId = (ps[i] as? Number)?.toInt() ?: 0
-                    
-                    // Lookup custom name from presets map
-                    val lookupPreset = allPresets[pId.toString()] as? Map<*, *>
-                    val pName = (lookupPreset as? Map<String, Any>)?.get("n") as? String ?: "Hiệu ứng $pId"
-                    
-                    val dVal = if (i < dur.size) (dur[i] as? Number)?.toFloat() ?: 0f else 0f
-                    val tVal = if (i < transition.size) (transition[i] as? Number)?.toFloat() ?: 0f else 0f
-                    
-                    val dSec = dVal / 10f
-                    val tSec = tVal / 10f
-                    
-                    val stepDuration = if (dSec <= 0f) 5f else dSec // Fallback for invalid duration
-                    
-                    parsedSteps.add(
-                        DevicePlaylistStep(
-                            presetId = pId,
-                            presetName = pName,
-                            durationSeconds = stepDuration,
-                            transitionSeconds = tSec,
-                            startSecond = currentStart,
-                            endSecond = currentStart + stepDuration + tSec
-                        )
-                    )
-                    currentStart += stepDuration + tSec
-                }
-                
-                // Scale if repeated
-                val finalSteps = mutableListOf<DevicePlaylistStep>()
-                var totalDuration = currentStart.toInt()
-                
-                if (repeat > 0) {
-                    var accumulatedStart = 0f
-                    for (r in 0 until repeat) {
-                        for (step in parsedSteps) {
-                            val duration = step.endSecond - step.startSecond
-                            finalSteps.add(
-                                step.copy(
-                                    startSecond = accumulatedStart,
-                                    endSecond = accumulatedStart + duration
-                                )
-                            )
-                            accumulatedStart += duration
-                        }
-                    }
-                    totalDuration = accumulatedStart.toInt()
-                } else {
-                    finalSteps.addAll(parsedSteps)
-                    if (totalDuration <= 0) totalDuration = 120
-                }
-                
-                DevicePlaylistTimeline(
-                    deviceId = device.id,
-                    deviceName = device.name,
-                    playlistId = playlistId,
-                    playlistName = name,
-                    steps = finalSteps,
-                    totalSeconds = totalDuration,
-                    isLoaded = true
-                )
-            }
+        val presets = try {
+            parsePresetsText(fetchPresetsText(device.ipAddress))
         } catch (e: Exception) {
-            DevicePlaylistTimeline(
-                deviceId = device.id,
-                deviceName = device.name,
-                playlistId = playlistId,
-                playlistName = "N/A",
-                steps = emptyList(),
-                totalSeconds = 0,
-                isLoaded = false,
-                error = "Lỗi kết nối IP: ${e.message}"
+            return fail("Lỗi kết nối IP: ${e.message}")
+        }
+        val preset = presets.optJSONObject(playlistId.toString())
+            ?: return fail("Không có Playlist ID $playlistId").copy(noPlaylist = true)
+        val name = preset.optString("n").ifBlank { "Preset $playlistId" }
+        val parsed = PlaylistTiming.parse(preset.optJSONObject("playlist"))
+            ?.let { PlaylistTiming.expandRepeats(it) }
+        if (parsed == null) {
+            // Preset thường (không phải playlist): 1 khối tĩnh, không tính vào thời lượng.
+            return DevicePlaylistTimeline(
+                deviceId = device.id, deviceName = device.name, playlistId = playlistId, playlistName = name,
+                steps = listOf(DevicePlaylistStep(playlistId, name, 120f, 0f, 0f, 120f)),
+                totalSeconds = 0, isLoaded = true
             )
         }
+        val steps = parsed.entries.zip(parsed.spans()) { e, (start, end) ->
+            val stepName = when {
+                e.ps == PresetSlots.OFF -> "OFF"
+                else -> presets.optJSONObject(e.ps.toString())?.optString("n")?.ifBlank { null } ?: "Preset ${e.ps}"
+            }
+            DevicePlaylistStep(
+                presetId = e.ps,
+                presetName = stepName,
+                durationSeconds = e.durDs / 10f,
+                transitionSeconds = e.trDs / 10f,
+                startSecond = start.toFloat(),
+                endSecond = end.toFloat()
+            )
+        }
+        return DevicePlaylistTimeline(
+            deviceId = device.id, deviceName = device.name, playlistId = playlistId, playlistName = name,
+            steps = steps, totalSeconds = kotlin.math.ceil(parsed.cycleSeconds - 1e-6).toInt(), isLoaded = true,
+            parsed = parsed
+        )
     }
 
     /**
@@ -1981,10 +1936,12 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         devices.value.forEach { device ->
             val timeline = _devicesTimelines.value[device.id]
             if (timeline != null && timeline.isLoaded) {
-                val step = timeline.steps.find { playhead >= it.startSecond && playhead < it.endSecond }
+                val cycle = timeline.playSeconds.toFloat()
+                val local = if (timeline.loop && cycle > 0f) playhead % cycle else playhead
+                val step = timeline.steps.find { local >= it.startSecond && local < it.endSecond }
                 if (step != null) {
                     val totalDuration = step.endSecond - step.startSecond
-                    val elapsedInStep = playhead - step.startSecond
+                    val elapsedInStep = local - step.startSecond
                     val remaining = (totalDuration - elapsedInStep).coerceAtLeast(0f)
                     newMap[device.id] = ActiveStepDetails(
                         presetId = step.presetId,
@@ -1999,267 +1956,220 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         _activeStepsMap.value = newMap
     }
 
-    private fun dispatchStepTransitions(currentSec: Float) {
-        val onlineDevices = devices.value.filter { it.isOnline }
-        onlineDevices.forEach { device ->
-            val timeline = _devicesTimelines.value[device.id]
-            if (timeline != null && timeline.isLoaded) {
-                val step = timeline.steps.find { currentSec >= it.startSecond && currentSec < it.endSecond }
-                if (step != null) {
-                    val previouslySent = lastSentPresetMap[device.id]
-                    if (previouslySent != step.presetId) {
-                        lastSentPresetMap[device.id] = step.presetId
-                        viewModelScope.launch(Dispatchers.IO) {
-                            val url = "http://${device.ipAddress}/json/state"
-                            try {
-                                val stateReq = WledStateRequest(on = true, ps = step.presetId)
-                                api.updateState(url, stateReq)
-                                val updated = device.copy(isOn = true, isOnline = true, lastSeenTimestamp = System.currentTimeMillis())
-                                repository.updateDeviceInDb(updated)
-                            } catch (e: Exception) {
-                                android.util.Log.e("WledViewModel", "Lỗi gửi hiệu ứng ${step.presetId} đến ${device.ipAddress}", e)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var playlistStartTimeMs: Long = 0L
-    private var playlistDurationSeconds: Int = 0
-
+    /**
+     * Tua playhead. Đang phát: nhạc + đồng hồ nhảy ngay, LED nhận playlist cắt tại vị trí mới sau khi
+     * thả tay 300 ms (kéo liên tục không spam mạch). Đang dừng: chỉ dời playhead — bấm Phát sẽ chạy từ đây.
+     */
     fun seekPlaylistElapsedSeconds(seconds: Float) {
         val coerced = seconds.coerceIn(0f, _playlistTotalSeconds.value.toFloat())
         _playlistElapsedSeconds.value = coerced
-        // Activate App-Orchestrated Choreography mode because they manually dragged / seeked the playhead
-        _isChoreographyMode.value = true
-        lastSentPresetMap.clear()
         updateActiveSteps(coerced)
-        if (_isPlaylistRunning.value) {
-            playlistStartTimeMs = System.currentTimeMillis() - (coerced * 1000L).toLong()
-            try {
-                mediaPlayer?.seekTo((coerced * 1000).toInt())
-            } catch (e: Exception) {}
+        when (_playlistPlaybackState.value) {
+            PlaylistPlaybackState.Running -> {
+                setClockAt(coerced.toDouble())
+                try {
+                    mediaPlayer?.seekTo((coerced * 1000).toInt())
+                } catch (_: Exception) {}
+                seekResendJob?.cancel()
+                seekResendJob = viewModelScope.launch {
+                    delay(300)
+                    if (_playlistPlaybackState.value != PlaylistPlaybackState.Running) return@launch
+                    val at = clockSeconds()
+                    _isChoreographyMode.value = at > PlaylistTiming.GAP_TOLERANCE
+                    sendPlaylistFrom(activePlaylistId, at, liveClock = true)
+                }
+            }
+            PlaylistPlaybackState.Completed -> _playlistPlaybackState.value = PlaylistPlaybackState.Idle
+            else -> Unit
         }
     }
 
     /**
-     * Starts the playlist timer with real-time progress.
-     * When completed, it sends commands to turn off all connected LED strips.
+     * Phát playlist [playlistId] trên mọi mạch online, cùng lúc, kèm nhạc.
+     * Từ đầu → `ps` [playlistId]; từ playhead (phát tiếp / đã tua) → playlist inline cắt tại playhead.
+     * Playlist lặp (`repeat` 0) → đồng hồ + nhạc quay vòng tới khi bấm Dừng; chạy 1 lần → hết thì tắt LED.
      */
     fun startPlaylistAllWithTimeline(playlistId: Int, manualDuration: Int? = null, forceRestart: Boolean = false) {
         playlistTimelineJob?.cancel()
-        playlistTimelineJob = null
-
-        val currentPosition = if (forceRestart) 0f else _playlistElapsedSeconds.value
-        val totalSecs = _playlistTotalSeconds.value.toFloat()
-        val startFrom = if (forceRestart || currentPosition >= totalSecs - 0.2f) 0f else currentPosition
-
-        // If starting from 0, reset to Native Playlist mode automatically
-        if (startFrom == 0f) {
-            _isChoreographyMode.value = false
-        }
+        seekResendJob?.cancel()
+        stopAudio()
+        activePlaylistId = playlistId
+        val requested = if (forceRestart) 0.0 else _playlistElapsedSeconds.value.toDouble()
 
         _isPlaylistRunning.value = true
         _playlistPlaybackState.value = PlaylistPlaybackState.Running
-        _playlistElapsedSeconds.value = startFrom
-        _playlistName.value = "Playlist $playlistId"
-        
-        log("Bắt đầu chạy kịch bản đồng bộ từ giây: ${String.format(java.util.Locale.US, "%.1f", startFrom)}s", "INFO")
-        
-        lastSentPresetMap.clear()
-        updateActiveSteps(startFrom)
 
         playlistTimelineJob = viewModelScope.launch {
+            playlistFreezeJob?.join()
             // §5.1: mạch vừa cắm lại có thể đã mất preset — kiểm (và ghi lại nếu được) trước khi phát.
             verifyDevicesBeforePlay(playlistId)
+            val onlineIds = devices.value.filter { it.isOnline }.map { it.id }.toSet()
+            if (timelinesDirty || timelinesPlaylistId != playlistId || !_devicesTimelines.value.keys.containsAll(onlineIds)) {
+                loadTimelines(playlistId)
+            }
+            manualDuration?.let { if (playbackCycleSeconds <= 0) _playlistTotalSeconds.value = it.coerceAtLeast(1) }
 
-            var duration = manualDuration
-            if (duration == null) {
-                // Try to detect and parse from active device
-                val fetchedDur = fetchPlaylistDurationFromDevice(playlistId)
-                if (fetchedDur != null && fetchedDur > 0) {
-                    _playlistTotalSeconds.value = fetchedDur
-                    duration = fetchedDur
-                } else {
-                    duration = _playlistTotalSeconds.value
+            val length = if (playbackCycleSeconds > 0) playbackCycleSeconds else _playlistTotalSeconds.value.toDouble()
+            val startFrom = if (requested >= length - 0.2) 0.0 else requested
+            _playlistElapsedSeconds.value = startFrom.toFloat()
+            _isChoreographyMode.value = startFrom > PlaylistTiming.GAP_TOLERANCE
+            updateActiveSteps(startFrom.toFloat())
+            log(
+                if (startFrom > PlaylistTiming.GAP_TOLERANCE)
+                    "Phát tiếp playlist $playlistId từ giây ${String.format(java.util.Locale.US, "%.1f", startFrom)}"
+                else "Phát playlist $playlistId từ đầu${if (playbackLoop) " (lặp)" else ""}",
+                "INFO"
+            )
+
+            // Nhạc chuẩn bị TRƯỚC (prepare() có thể mất vài trăm ms), rồi LED + nhạc + đồng hồ cùng chạy.
+            val audio = withContext(Dispatchers.IO) { prepareAudio(startFrom.toFloat()) }
+            sendPlaylistFrom(playlistId, startFrom)
+            setClockAt(startFrom)
+            startAudio(audio)
+
+            while (_playlistPlaybackState.value == PlaylistPlaybackState.Running) {
+                var now = clockSeconds()
+                if (length > 0 && now >= length) {
+                    if (playbackLoop) {
+                        // Mạch tự lặp; app chỉ quay vòng đồng hồ + nhạc về đầu vòng mới.
+                        val cycles = kotlin.math.floor(now / length)
+                        playClockBaseMs += (cycles * length * 1000).toLong()
+                        now = clockSeconds()
+                        _isChoreographyMode.value = false
+                        try {
+                            mediaPlayer?.let { mp ->
+                                mp.seekTo((now * 1000).toInt())
+                                if (!mp.isPlaying) mp.start()
+                            }
+                        } catch (_: Exception) {}
+                    } else {
+                        _playlistElapsedSeconds.value = length.toFloat()
+                        updateActiveSteps(length.toFloat())
+                        break
+                    }
                 }
-            } else {
-                _playlistTotalSeconds.value = duration
+                _playlistElapsedSeconds.value = now.toFloat()
+                updateActiveSteps(now.toFloat())
+                delay(50)
             }
 
-            playlistDurationSeconds = duration!!
-
-            // Reset again to force immediate first transition load if in choreography mode
-            lastSentPresetMap.clear()
-
-            if (_isChoreographyMode.value) {
-                playlistFreezeJob?.join()
-                val freezeSummary = setFreezeAllOnlineDevices(false)
-                logFreezeWarningIfNeeded(freezeSummary, "Chuẩn bị chạy tiếp bằng Biên đạo chủ động")
-            } else {
-                // Native mode lets WLED run playlist 249 on-device after any pending freeze is cleared.
-                runPlaylistAllNow(playlistId)
-            }
-
-            playlistStartTimeMs = System.currentTimeMillis() - (startFrom * 1000L).toLong()
-
-            // Synchronized audio play
-            playAudio()
-
-            while (_isPlaylistRunning.value) {
-                val elapsedMs = System.currentTimeMillis() - playlistStartTimeMs
-                val currentSec = (elapsedMs / 1000f).coerceAtMost(playlistDurationSeconds.toFloat())
-                _playlistElapsedSeconds.value = currentSec
-                updateActiveSteps(currentSec)
-                
-                // ONLY dispatch active HTTP commands if we are in "Chế độ Biên Đạo Chủ Động" (Choreography Mode)!
-                // Otherwise (Native Mode), the devices run the playlist natively itself.
-                if (_isChoreographyMode.value) {
-                    dispatchStepTransitions(currentSec)
-                }
-
-                if (elapsedMs >= playlistDurationSeconds * 1000L) {
-                    _playlistElapsedSeconds.value = playlistDurationSeconds.toFloat()
-                    updateActiveSteps(playlistDurationSeconds.toFloat())
-                    break
-                }
-                delay(50) // update playhead smoothly with 1/20th of a second checks
-            }
-
-            // Playlist completed! Turn OFF all LEDs and stop audio
-            if (_isPlaylistRunning.value) {
+            if (_playlistPlaybackState.value == PlaylistPlaybackState.Running) {
                 log("Đã hoàn thành kịch bản đồng bộ.", "INFO")
-                _playlistElapsedSeconds.value = _playlistTotalSeconds.value.toFloat()
                 _isPlaylistRunning.value = false
+                _isChoreographyMode.value = false
                 _playlistPlaybackState.value = PlaylistPlaybackState.Completed
                 stopAudio()
-                togglePowerAll(false)
+                sendStopTogether("Kết thúc kịch bản")
             }
+        }
+    }
+
+    /**
+     * Gửi lệnh phát tới mọi mạch online cùng lúc: từ đầu = `ps`, từ [offset] = playlist inline đã cắt.
+     * [liveClock] (tua khi đang phát): vị trí cắt lấy theo đồng hồ NGAY TRƯỚC khi gửi (sau bước dọn ~0.15 s).
+     */
+    private suspend fun sendPlaylistFrom(playlistId: Int, offset: Double, liveClock: Boolean = false) {
+        if (offset <= PlaylistTiming.GAP_TOLERANCE) {
+            runPlaylistAllNow(playlistId)
+            return
+        }
+        val online = devices.value.filter { it.isOnline }
+        val targets = online.filter { !MockDevice.isMock(it.ipAddress) && _devicesTimelines.value[it.id]?.parsed != null }
+        val skipped = online.filter { !MockDevice.isMock(it.ipAddress) && it !in targets }.map { it.name }
+        if (skipped.isNotEmpty()) log("Phát tiếp: bỏ qua ${skipped.joinToString()} (không đọc được playlist $playlistId).", "WARN")
+        if (targets.isEmpty()) return
+        // Còn cha mà đang chạy 249 → FW bỏ qua playlist mới (tua không ăn). Dọn trước.
+        resetPlaylistStates(targets.map { it.ipAddress })
+        val at = if (liveClock) clockSeconds() else offset
+        val bodies = LinkedHashMap<String, String>()
+        for (d in targets) {
+            val parsed = _devicesTimelines.value[d.id]?.parsed ?: continue
+            val entries = PlaylistTiming.resumeEntries(parsed, at)
+            val body = org.json.JSONObject().put("on", true)
+                .put("seg", org.json.JSONArray().put(org.json.JSONObject().put("id", 0).put("frz", false)))
+            if (entries == null) {
+                // Playlist chạy 1 lần của mạch này đã hết trước playhead → giữ mục cuối như khi chạy thật.
+                body.put("ps", parsed.entries.last().ps)
+            } else {
+                body.put("playlist", PlaylistTiming.resumeJson(entries, parsed.loop))
+            }
+            bodies[d.ipAddress] = body.toString()
+        }
+        if (bodies.isEmpty()) return
+        reportTogether("Phát tiếp playlist $playlistId", online, postStateTogether(bodies))
+    }
+
+    /** Tắt LED mọi mạch cùng lúc, rồi dọn + gỡ hẳn playlist (chỉ `on:false` thì playlist vẫn treo trên mạch). */
+    private suspend fun sendStopTogether(label: String) {
+        val online = devices.value.filter { it.isOnline }
+        if (online.isEmpty()) return
+        val pending = postStateTogether(online.map { it.ipAddress }, OFF_BODY)
+        viewModelScope.launch(Dispatchers.IO) {
+            online.map { d ->
+                async {
+                    val r = pending[d.ipAddress]?.await() ?: return@async
+                    if (r.isSuccess) {
+                        repository.updateDeviceInDb(d.copy(isOn = false, lastSeenTimestamp = System.currentTimeMillis()))
+                        if (!MockDevice.isMock(d.ipAddress)) runCatching {
+                            resetPlaylistState(d.ipAddress, freeze = false)
+                            postState(d.ipAddress, UNLOAD_PLAYLIST_BODY, timeoutSec = 2)
+                        }
+                    } else log("$label: không gửi được lệnh tắt tới ${d.name}: ${r.exceptionOrNull()?.message}", "WARN")
+                }
+            }.awaitAll()
         }
     }
 
     fun stopPlaylistTimeline() {
         playlistTimelineJob?.cancel()
         playlistTimelineJob = null
+        seekResendJob?.cancel()
         _isPlaylistRunning.value = false
         _playlistElapsedSeconds.value = 0f
         _playlistPlaybackState.value = PlaylistPlaybackState.Idle
-        _isChoreographyMode.value = false // Reset back to default WLED native playlist mode
-        lastSentPresetMap.clear()
+        _isChoreographyMode.value = false
         updateActiveSteps(0f)
         stopAudio()
-        togglePowerAll(false)
+        playlistFreezeJob?.cancel()
+        playlistFreezeJob = viewModelScope.launch { sendStopTogether("Dừng kịch bản") }
         log("Đã dừng kịch bản liên hoàn và tắt toàn bộ LED.", "WARN")
     }
 
     fun pausePlaylistTimeline() {
-        if (!_isPlaylistRunning.value) return
+        if (_playlistPlaybackState.value != PlaylistPlaybackState.Running) return
 
         playlistTimelineJob?.cancel()
         playlistTimelineJob = null
+        seekResendJob?.cancel()
         _isPlaylistRunning.value = false
         _playlistPlaybackState.value = PlaylistPlaybackState.Paused
         stopAudio()
         updateActiveSteps(_playlistElapsedSeconds.value)
-        
+
+        // Đóng băng khung hình + DỪNG playlist trên mạch (chỉ freeze thì bước kế vẫn tự chạy tiếp).
         playlistFreezeJob?.cancel()
         playlistFreezeJob = viewModelScope.launch {
-            val summary = setFreezeAllOnlineDevices(true)
-            when {
-                summary.attempted == 0 -> {
-                    log("Đã tạm dừng kịch bản, nhưng hiện không có thiết bị online để freeze.", "WARN")
-                }
-                summary.failures.isEmpty() -> {
-                    log("Đã tạm dừng kịch bản liên hoàn và freeze ${summary.succeeded}/${summary.attempted} thiết bị.", "INFO")
-                }
-                else -> {
-                    val failedDevices = summary.failures
-                        .take(3)
-                        .joinToString(", ") { "${it.deviceName} (${it.ipAddress})" }
-                    val suffix = if (summary.failures.size > 3) ", ..." else ""
-                    log(
-                        "Đã tạm dừng timer, nhưng freeze chỉ thành công ${summary.succeeded}/${summary.attempted} thiết bị. Lỗi: $failedDevices$suffix",
-                        "WARN"
-                    )
-                }
+            // Mạch không có playlist thì không đang phát gì → khỏi đóng băng (tránh mạch đang tắt bị freeze).
+            val online = devices.value.filter { it.isOnline && _devicesTimelines.value[it.id]?.noPlaylist != true }
+            if (online.isEmpty()) {
+                log("Đã tạm dừng kịch bản, nhưng hiện không có thiết bị online.", "WARN")
+                return@launch
+            }
+            val pending = postStateTogether(online.map { it.ipAddress }, FREEZE_BODY)
+            val results = pending.mapValues { it.value.await() }
+            // Chỉ freeze thì tới bước kế mạch nạp preset mới và tự hết đóng băng → dừng hẳn playlist (giữ frz).
+            resetPlaylistStates(online.filter { results[it.ipAddress]?.isSuccess == true }.map { it.ipAddress }, freeze = true)
+            val failed = online.filter { results[it.ipAddress]?.isSuccess != true }
+            if (failed.isEmpty()) {
+                log("Đã tạm dừng kịch bản tại ${String.format(java.util.Locale.US, "%.1f", _playlistElapsedSeconds.value)} s trên ${online.size} thiết bị.", "INFO")
+            } else {
+                log("Tạm dừng: không gửi được tới ${failed.joinToString { "${it.name} (${it.ipAddress})" }}.", "WARN")
             }
         }
     }
 
     fun resumePlaylistTimeline() {
-        if (_playlistPlaybackState.value != PlaylistPlaybackState.Paused) {
-            startPlaylistAllWithTimeline(playlistPresetSlot)
-            return
-        }
-
-        _isChoreographyMode.value = true
-        startPlaylistAllWithTimeline(playlistPresetSlot)
-    }
-
-    /**
-     * Fetch WLED devices' presets.json to parse step durations and transitions
-     */
-    private suspend fun fetchPlaylistDurationFromDevice(playlistId: Int): Int? = withContext(Dispatchers.IO) {
-        val onlineDevice = devices.value.find { it.isOnline && !MockDevice.isMock(it.ipAddress) } ?: return@withContext null
-        val url = "http://${onlineDevice.ipAddress}/presets.json"
-        try {
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            val request = okhttp3.Request.Builder().url(url).build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val bodyString = response.body?.string() ?: return@withContext null
-                
-                val moshi = com.squareup.moshi.Moshi.Builder().build()
-                val mapType = com.squareup.moshi.Types.newParameterizedType(
-                    Map::class.java,
-                    String::class.java,
-                    Any::class.java
-                )
-                val adapter = moshi.adapter<Map<String, Any>>(mapType)
-                val allPresets = adapter.fromJson(bodyString) ?: return@withContext null
-                
-                val presetData = allPresets[playlistId.toString()] as? Map<*, *> ?: return@withContext null
-                
-                val name = presetData["n"] as? String ?: "Preset $playlistId"
-                _playlistName.value = name
-
-                val playlistMap = presetData["playlist"] as? Map<*, *> ?: return@withContext null
-                
-                val ps = playlistMap["ps"] as? List<*>
-                val dur = playlistMap["dur"] as? List<*>
-                val transition = playlistMap["transition"] as? List<*>
-                val repeat = (playlistMap["repeat"] as? Number)?.toInt() ?: 1
-                
-                _playlistStepsCount.value = ps?.size ?: 0
-                
-                if (dur != null) {
-                    var totalTenths = 0
-                    for (i in dur.indices) {
-                        val d = (dur[i] as? Number)?.toInt() ?: 0
-                        val t = if (transition != null && i < transition.size) {
-                            (transition[i] as? Number)?.toInt() ?: 0
-                        } else {
-                            0
-                        }
-                        totalTenths += (d + t)
-                    }
-                    
-                    var totalSecs = (totalTenths + 5) / 10
-                    if (totalSecs <= 0) totalSecs = 120
-                    
-                    val calculatedDuration = if (repeat > 0) totalSecs * repeat else totalSecs
-                    return@withContext calculatedDuration
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("WledViewModel", "Could not fetch or parse presets.json from ${onlineDevice.ipAddress}", e)
-        }
-        null
+        startPlaylistAllWithTimeline(activePlaylistId)
     }
 
     private fun startPolling() {
@@ -2291,6 +2201,13 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     private val systemPresetSlots = PresetSlots.SYSTEM
     private val protectedPresetSlots = setOf(PresetSlots.AUTOSAVE, PresetSlots.OFF, PresetSlots.BUTTON)
     private val playlistPresetSlot = PresetSlots.PLAYLIST
+
+    /** Tạm dừng: đóng băng khung hình NGAY (cùng lúc mọi mạch); playlist được dừng sau bằng [resetPlaylistState]. */
+    private val FREEZE_BODY = "{\"seg\":[{\"id\":0,\"frz\":true}]}"
+    /** Dừng / hết kịch bản: tắt LED cùng lúc; sau đó [resetPlaylistState] + [UNLOAD_PLAYLIST_BODY]. */
+    private val OFF_BODY = "{\"on\":false,\"seg\":[{\"id\":0,\"frz\":false}]}"
+    /** Gỡ playlist (pl → -1). Chỉ gửi SAU [resetPlaylistState] (playlist hiện tại là inline id 0 → không ghi cha). */
+    private val UNLOAD_PLAYLIST_BODY = "{\"playlist\":{\"ps\":[]}}"
     private val logoPresetRange = PresetSlots.LOGO_RANGE
     private val imageFileExtensions = setOf(".gif", ".bmp", ".png", ".jpg", ".jpeg")
     private val presetFileClient = okhttp3.OkHttpClient.Builder()
@@ -2785,8 +2702,60 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
      * mở (lệnh đã được gửi đi) — kết quả từng mạch (thời điểm gửi, ns) nằm trong các Deferred, để
      * người gọi không phải chờ mạch chậm / mất kết nối mới bật nhạc.
      */
-    private suspend fun postStateTogether(ips: List<String>, body: String): Map<String, kotlinx.coroutines.Deferred<Result<Long>>> {
-        val targets = ips.distinct()
+    private suspend fun postStateTogether(ips: List<String>, body: String): Map<String, kotlinx.coroutines.Deferred<Result<Long>>> =
+        postStateTogether(ips.distinct().associateWith { body })
+
+    /**
+     * Dọn trạng thái playlist của 1 mạch mà KHÔNG đổi khung hình. FW ≥ 2512040 có playlist lồng (đọc
+     * `wled00/playlist.cpp` của ARGB-v3-SuperNova 2611103 + đo trên mạch):
+     *  - nạp playlist khi đang chạy playlist khác → cái cũ thành "cha"; playlist chạy 1 lần hết → nạp lại cha
+     *    ở chỗ dở (tạm dừng / phát tiếp xong, mạch tự chạy lại 249 từ giữa);
+     *  - còn cha mà đang chạy playlist → mọi lệnh nạp playlist bị BỎ QUA (kể cả `"ps":[]`);
+     *  - chỉ playlist `repeat` 0 mới xoá cha.
+     * Cách dọn: gửi lại `fx` hiện tại của seg 0 (cùng giá trị → không đổi hiệu ứng, nhưng FW gỡ playlist mà không
+     * ghi cha) + nạp playlist "giữ" `repeat` 0 (preset 0 = không áp gì) → sạch cha, khung hình giữ nguyên.
+     */
+    private suspend fun resetPlaylistState(ip: String, freeze: Boolean? = null) {
+        if (MockDevice.isMock(ip)) return
+        val fx = runCatching {
+            withContext(Dispatchers.IO) {
+                val req = okhttp3.Request.Builder().url("http://$ip/json/state").build()
+                playClient.newCall(req).execute().use { r ->
+                    org.json.JSONObject(r.body?.string().orEmpty()).optJSONArray("seg")?.optJSONObject(0)?.optInt("fx", -1)
+                }
+            }
+        }.getOrNull()?.takeIf { it >= 0 }
+        val seg = org.json.JSONObject().put("id", 0)
+        fx?.let { seg.put("fx", it) }
+        freeze?.let { seg.put("frz", it) }
+        val body = org.json.JSONObject()
+            .put("seg", org.json.JSONArray().put(seg))
+            .put("playlist", PlaylistTiming.holdPlaylistJson())
+        postState(ip, body.toString(), timeoutSec = 2)
+    }
+
+    /** [resetPlaylistState] song song cho nhiều mạch (lỗi từng mạch bỏ qua — lệnh chính vẫn gửi). */
+    private suspend fun resetPlaylistStates(ips: Collection<String>, freeze: Boolean? = null) {
+        val real = ips.filterNot { MockDevice.isMock(it) }
+        if (real.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            real.map { ip -> async { runCatching { resetPlaylistState(ip, freeze) } } }.awaitAll()
+        }
+    }
+
+    /** POST /json/state 1 mạch (không đồng bộ thời điểm). */
+    private suspend fun postState(ip: String, body: String, timeoutSec: Long = 3) = withContext(Dispatchers.IO) {
+        val request = okhttp3.Request.Builder()
+            .url("http://$ip/json/state")
+            .post(body.toRequestBody(jsonUtf8))
+            .build()
+        playClient.newBuilder().callTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS).build()
+            .newCall(request).execute().use { r -> if (!r.isSuccessful) throw Exception("HTTP ${r.code}") }
+    }
+
+    /** Như trên nhưng mỗi mạch 1 lệnh riêng (playlist cắt tại playhead khác nhau theo mạch). */
+    private suspend fun postStateTogether(bodies: Map<String, String>): Map<String, kotlinx.coroutines.Deferred<Result<Long>>> {
+        val targets = bodies.keys.toList()
         val ready = java.util.concurrent.CountDownLatch(targets.size)
         val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val jobs = targets.associateWith { ip ->
@@ -2794,7 +2763,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 // Dựng sẵn mọi thứ TRƯỚC cổng.
                 val request = okhttp3.Request.Builder()
                     .url("http://$ip/json/state")
-                    .post(body.toRequestBody(jsonUtf8))
+                    .post(bodies.getValue(ip).toRequestBody(jsonUtf8))
                     .build()
                 ready.countDown()
                 gate.await()
@@ -2881,6 +2850,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
      * khác rỗng (thử 3 lần, cách 0.4 s). Firmware có thể nhận upload mà không lưu → báo lỗi.
      */
     private suspend fun uploadPresetsVerified(ip: String, presets: org.json.JSONObject, checkSlots: Collection<Int>) {
+        markTimelinesDirty()
         uploadPresetsJson(ip, PresetJson.presetsJsonText(presets))
         if (MockDevice.isMock(ip) || checkSlots.isEmpty()) return
         var missing: List<Int> = checkSlots.toList()
@@ -3358,19 +3328,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         if (!device.isOnline) return
         viewModelScope.launch {
             val list = try {
-                val presets = fetchPresetsJsonObject(device.ipAddress)
-                val out = mutableListOf<EditablePreset>()
-                val keys = presets.keys()
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    val pid = key.toIntOrNull() ?: continue
-                    if (pid in systemPresetSlots || pid in PresetSlots.RESERVED || pid <= 0) continue
-                    val obj = presets.optJSONObject(key) ?: continue
-                    if (obj.length() == 0) continue
-                    val name = obj.optString("n", "Preset $pid").ifBlank { "Preset $pid" }
-                    out += EditablePreset(pid, name)
-                }
-                out.sortedBy { it.id }
+                editablePresetsOf(fetchPresetsJsonObject(device.ipAddress))
             } catch (e: Exception) {
                 android.util.Log.e("WledViewModel", "fetchEditorPresets failed", e)
                 emptyList()
@@ -3378,6 +3336,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             _editorPresets.value = _editorPresets.value + (device.id to list)
         }
     }
+
+    private fun editablePresetsOf(presets: org.json.JSONObject): List<EditablePreset> =
+        TimelineEditing.editablePresets(presets).map { (id, name, kind) -> EditablePreset(id, name, kind) }
 
     /** Touch nhanh vào preset → phát thử ngay trên thiết bị để xem trước. */
     fun previewPreset(deviceId: Int, presetId: Int) {
@@ -3408,7 +3369,8 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             presetId = presetId,
             presetName = presetName,
             startSec = startSec.coerceAtLeast(0f),
-            durationSec = dur
+            durationSec = dur,
+            transitionSec = TimelineEditing.DEFAULT_TRANSITION_SEC.coerceAtMost(dur)
         )
         // Clip mới "chiếm chỗ", đẩy các clip bị chồng sang phải theo dây chuyền.
         updateDeviceClips(deviceId, rippleResolve(existing + clip, clip.id))
@@ -3461,6 +3423,18 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         return out
     }
 
+    /** Chuyển cảnh của 1 clip (giây) — nằm TRONG thời lượng clip nên không dài hơn clip. */
+    fun setClipTransition(deviceId: Int, clipId: Long, seconds: Float) {
+        val list = _editorClips.value[deviceId] ?: return
+        updateDeviceClips(deviceId, list.map { if (it.id == clipId) it.copy(transitionSec = seconds.coerceAtLeast(0f)) else it })
+    }
+
+    /** Áp chuyển cảnh [seconds] cho mọi clip của mạch. */
+    fun setDeviceTransition(deviceId: Int, seconds: Float) {
+        val list = _editorClips.value[deviceId] ?: return
+        updateDeviceClips(deviceId, list.map { it.copy(transitionSec = seconds.coerceAtLeast(0f)) })
+    }
+
     fun removeClip(deviceId: Int, clipId: Long) {
         val list = _editorClips.value[deviceId] ?: return
         updateDeviceClips(deviceId, list.filterNot { it.id == clipId })
@@ -3474,6 +3448,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun updateDeviceClips(deviceId: Int, clips: List<TimelineClip>) {
         val sorted = clips.sortedBy { it.startSec }
+            .map { if (it.transitionSec > it.durationSec) it.copy(transitionSec = it.durationSec) else it }
         _editorClips.value = _editorClips.value + (deviceId to sorted)
         recomputeEditorTotalSeconds()
         persistDeviceClips(deviceId, sorted)
@@ -3505,9 +3480,11 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Ghi timeline đã biên tập của mọi mạch online (có clip) vào slot 249 + upload. */
-    fun compileAndUploadEditorTimelines(loop: Boolean, onDone: () -> Unit = {}) {
+    fun compileAndUploadEditorTimelines(loop: Boolean = _editorLoop.value, onDone: () -> Unit = {}) {
         if (_editorUploadState.value.isRunning) return
-        val total = _editorTotalSeconds.value
+        // Như desktop (`total_end`): mọi mạch dài bằng clip kết thúc muộn nhất (đuôi OFF) để lặp cùng nhịp.
+        // Trước đây dùng chiều dài thước (≥ 60 s, làm tròn 10 s) → thêm đoạn tối dài ở cuối mỗi vòng.
+        val total = _editorClips.value.values.flatten().maxOfOrNull { (it.startSec + it.durationSec).toDouble() } ?: 0.0
         val targets = devices.value.filter { it.isOnline && !(_editorClips.value[it.id].isNullOrEmpty()) }
         if (targets.isEmpty()) {
             _editorUploadState.value = EditorUploadUiState(error = "Chưa có timeline nào để ghi (mạch online + có clip).")
@@ -3530,7 +3507,13 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         }
                         if (entries.isEmpty()) throw Exception("Không có clip hợp lệ")
-                        val compiled = TimecodePlanner.compilePlaylist(entries, total.toDouble(), loop)
+                        val compiled = TimecodePlanner.compilePlaylist(entries, total, loop)
+                        val nested = TimelineEditing.nestedPlaylistRefs(presets, compiled.ps)
+                        if (nested.isNotEmpty()) {
+                            throw Exception(
+                                "preset ${nested.joinToString()} là playlist — playlist lồng sẽ thay timeline đang chạy, hãy dùng preset thường"
+                            )
+                        }
                         // §5.3: không ghi playlist gọi preset không còn trên mạch (phần đó sẽ không phát gì).
                         val missing = TimecodePlanner.missingPlaylistRefs(
                             presets, compiled.ps.filter { it != PresetSlots.OFF }, pmax
@@ -3556,7 +3539,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                         // 249 giờ do tab Biên Tập ghi → không ghi lại từ file timecode cũ nữa.
                         forgetLastImportFor(device.ipAddress, device.mac)
                     }
-                    results += "${device.name}: OK (${clips.size} clip)"
+                    results += "${device.name}: OK (${clips.size} clip, ${if (loop) "lặp" else "chạy 1 lần"})"
                 } catch (e: Exception) {
                     hadError = true
                     android.util.Log.e("WledViewModel", "compile editor timeline failed for ${device.ipAddress}", e)
@@ -3574,8 +3557,80 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * "Đọc từ mạch": dựng lại track từ playlist 249 đang lưu trên mạch (desktop `load_playlist_slot`).
+     * Chỉ thay track của mạch đọc được playlist; mạch offline / không có 249 giữ nguyên clip.
+     * Mục 248 (OFF) = khoảng trống. Công tắc Lặp theo `repeat` của playlist đọc được.
+     */
+    fun loadEditorFromDevices() {
+        if (_editorUploadState.value.isRunning) return
+        val targets = devices.value.filter { it.isOnline && !MockDevice.isMock(it.ipAddress) }
+        if (targets.isEmpty()) {
+            _editorUploadState.value = EditorUploadUiState(
+                action = EditorAction.LOAD, finished = true, error = "Không có mạch online để đọc playlist 249."
+            )
+            return
+        }
+        viewModelScope.launch {
+            _editorUploadState.value = EditorUploadUiState(isRunning = true, action = EditorAction.LOAD)
+            val fetched = targets.map { d ->
+                viewModelScope.async(Dispatchers.IO) { d to runCatching { fetchPresetsJsonObject(d.ipAddress) } }
+            }.awaitAll()
+            val results = mutableListOf<String>()
+            var loaded = 0
+            var loop: Boolean? = null
+            for ((d, r) in fetched) {
+                val presets = r.getOrElse {
+                    results += "${d.name}: lỗi đọc presets.json — ${it.message}"
+                    continue
+                }
+                _editorPresets.value = _editorPresets.value + (d.id to editablePresetsOf(presets))
+                val parsed = PlaylistTiming.parse(
+                    presets.optJSONObject(PresetSlots.PLAYLIST.toString())?.optJSONObject("playlist")
+                )
+                if (parsed == null) {
+                    results += "${d.name}: không có playlist ${PresetSlots.PLAYLIST} — giữ nguyên track"
+                    continue
+                }
+                if (loop == null) loop = parsed.loop
+                val clips = PlaylistTiming.clipsFromPlaylist(parsed).map {
+                    TimelineClip(
+                        id = nextEditorClipId++,
+                        deviceId = d.id,
+                        presetId = it.presetId,
+                        presetName = PresetCleanup.presetName(presets, it.presetId),
+                        startSec = it.startSec.toFloat(),
+                        durationSec = it.durationSec.toFloat(),
+                        transitionSec = it.transitionSec.toFloat()
+                    )
+                }
+                updateDeviceClips(d.id, clips)
+                loaded++
+                results += "${d.name}: ${clips.size} clip · " +
+                    String.format(java.util.Locale.US, "%.1f", parsed.cycleSeconds) + " s · " +
+                    (if (parsed.loop) "lặp" else "chạy 1 lần")
+            }
+            loop?.let { setEditorLoop(it) }
+            // Thước co lại theo nội dung vừa đọc (recompute chỉ nới rộng).
+            val maxEnd = _editorClips.value.values.flatten().maxOfOrNull { it.startSec + it.durationSec } ?: 0f
+            _editorTotalSeconds.value = (Math.ceil(maxEnd / 10.0).toInt() * 10).coerceAtLeast(60)
+            _editorUploadState.value = EditorUploadUiState(
+                action = EditorAction.LOAD,
+                finished = true,
+                results = results,
+                error = if (loaded == 0) "Không mạch nào có playlist ${PresetSlots.PLAYLIST} — giữ nguyên timeline." else null
+            )
+        }
+    }
+
     fun dismissEditorUpload() {
         if (!_editorUploadState.value.isRunning) _editorUploadState.value = EditorUploadUiState()
+    }
+
+    // Đặt CUỐI lớp: Kotlin khởi tạo thuộc tính theo thứ tự trong file — gọi ở init đầu lớp thì
+    // `_selectedAudioUri`/`_playlistTotalSeconds`… còn null → NPE bị nuốt, nhạc đã chọn không được khôi phục.
+    init {
+        loadAudioPreferences()
     }
 }
 
@@ -3599,7 +3654,7 @@ data class ImageUploadDeviceResult(
 )
 
 /** Một preset có thể kéo vào timeline (tab Biên Tập). */
-data class EditablePreset(val id: Int, val name: String)
+data class EditablePreset(val id: Int, val name: String, val kind: PresetKind = PresetKind.EFFECT)
 
 /** Clip preset trên timeline biên tập (working state, đơn vị giây). */
 data class TimelineClip(
@@ -3612,8 +3667,11 @@ data class TimelineClip(
     val transitionSec: Float = 0f
 )
 
-/** Trạng thái ghi timeline biên tập vào thiết bị. */
+enum class EditorAction { UPLOAD, LOAD }
+
+/** Trạng thái ghi (Nạp vào 249) / đọc (Đọc từ mạch) timeline biên tập. */
 data class EditorUploadUiState(
+    val action: EditorAction = EditorAction.UPLOAD,
     val isRunning: Boolean = false,
     val finished: Boolean = false,
     val results: List<String> = emptyList(),
@@ -3803,5 +3861,13 @@ data class DevicePlaylistTimeline(
     val steps: List<DevicePlaylistStep>,
     val totalSeconds: Int,
     val isLoaded: Boolean = false,
-    val error: String? = null
-)
+    val error: String? = null,
+    /** Playlist đọc từ mạch (đã trải `repeat` N); null = preset thường / lỗi / mock. */
+    val parsed: PlaylistTiming.Parsed? = null,
+    /** Đọc được presets.json nhưng KHÔNG có preset [playlistId] → khi Phát không gửi gì tới mạch này. */
+    val noPlaylist: Boolean = false
+) {
+    val loop: Boolean get() = parsed?.loop == true
+    /** Thời lượng 1 lần phát (giây, chính xác). */
+    val playSeconds: Double get() = parsed?.cycleSeconds ?: 0.0
+}
