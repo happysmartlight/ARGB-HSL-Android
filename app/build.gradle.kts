@@ -28,8 +28,8 @@ android {
     applicationId = "com.happysmartlight.argb"
     minSdk = 24
     targetSdk = 36
-    versionCode = 13
-    versionName = "1.9"
+    versionCode = 14
+    versionName = "1.10"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

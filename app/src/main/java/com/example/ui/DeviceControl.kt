@@ -2597,7 +2597,9 @@ fun DeviceControlSection(
                                                             fontSize = 11.sp
                                                         )
                                                         Text(
-                                                            text = "${strings.dcEffectPrefix} ${details.presetName} (PS ${details.presetId})",
+                                                            // presetId 0 = clip của file show (không dùng preset từng clip)
+                                                            text = "${strings.dcEffectPrefix} ${details.presetName}" +
+                                                                if (details.presetId > 0) " (PS ${details.presetId})" else " (show)",
                                                             style = MaterialTheme.typography.bodySmall,
                                                             fontSize = 9.5.sp,
                                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)

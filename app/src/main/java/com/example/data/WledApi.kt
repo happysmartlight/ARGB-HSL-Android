@@ -80,6 +80,14 @@ data class WledFilesystemInfo(
     @Json(name = "pmax") val pmax: Int? = null
 )
 
+/** Trình phát show của firmware (usermod show_player); thiếu = firmware cũ (chỉ phát playlist). */
+@JsonClass(generateAdapter = true)
+data class WledShowInfo(
+    @Json(name = "v") val v: Int? = null,
+    @Json(name = "clips") val clips: Int? = null,
+    @Json(name = "err") val err: String? = null
+)
+
 @JsonClass(generateAdapter = true)
 data class WledInfo(
     @Json(name = "ver") val ver: String? = null,
@@ -94,7 +102,8 @@ data class WledInfo(
     @Json(name = "leds") val leds: WledLedsInfo? = null,
     @Json(name = "brand") val brand: String? = null,
     @Json(name = "fs") val fs: WledFilesystemInfo? = null,
-    @Json(name = "mac") val mac: String? = null
+    @Json(name = "mac") val mac: String? = null,
+    @Json(name = "show") val show: WledShowInfo? = null
 )
 
 @JsonClass(generateAdapter = true)

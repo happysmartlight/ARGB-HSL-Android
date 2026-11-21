@@ -1447,10 +1447,17 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         val (skipped, targets) = devices.value.filter { it.isOnline }.partition { timelines[it.id]?.noPlaylist == true }
         if (skipped.isNotEmpty()) log("Phát playlist $playlistId: bỏ qua ${skipped.joinToString { it.name }} (mạch chưa có playlist $playlistId).", "WARN")
         if (targets.isEmpty()) return
+        // Mạch có trình phát show: lệnh phát show từ 0. Lệnh "seg"/"playlist" (như dọn playlist bên dưới) sẽ
+        // bị trình phát coi là người khác chiếm mạch → show dừng, nên không gửi cho mạch này.
+        val shows = targets.filter { timelines[it.id]?.isShow == true }
+        val lists = targets - shows.toSet()
         // Dọn playlist cha còn sót (xem resetPlaylistState) — song song, trước vạch xuất phát, không đổi khung hình.
-        resetPlaylistStates(targets.map { it.ipAddress })
+        resetPlaylistStates(lists.map { it.ipAddress })
         val body = "{\"on\":true,\"seg\":[{\"id\":0,\"frz\":false}],\"ps\":$playlistId}"
-        reportTogether("Phát playlist $playlistId", targets, postStateTogether(targets.map { it.ipAddress }, body))
+        val bodies = LinkedHashMap<String, String>()
+        for (d in lists) bodies[d.ipAddress] = body
+        for (d in shows) bodies[d.ipAddress] = PresetJson.compact(ShowDevice.playCommand(0))
+        reportTogether("Phát playlist $playlistId", targets, postStateTogether(bodies))
     }
 
     /** Lệnh đã gửi → trả về ngay để nhạc bắt đầu cùng LED; báo kết quả (độ lệch, mạch lỗi) chạy nền. */
@@ -1893,6 +1900,18 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         val preset = presets.optJSONObject(playlistId.toString())
             ?: return fail("Không có Playlist ID $playlistId").copy(noPlaylist = true)
         val name = preset.optString("n").ifBlank { "Preset $playlistId" }
+        if (ShowFile.isPlayPreset(preset)) {
+            // 249 = lệnh phát show (desktop "Ghi vào mạch" / app nạp file show): đọc /show.jsonl.
+            val v = ShowDevice.probeVersion(device.ipAddress).coerceAtLeast(ShowFile.MIN_PLAYER_VERSION)
+            val show = ShowFile.parseShow(ShowDevice.readShow(device.ipAddress))
+                ?: return fail("249 là lệnh phát show nhưng mạch không có file /show.jsonl đọc được — hãy nạp lại timeline.")
+                    .copy(noPlaylist = true)
+            return DevicePlaylistTimeline(
+                deviceId = device.id, deviceName = device.name, playlistId = playlistId, playlistName = show.name.ifBlank { name },
+                steps = showSteps(show), totalSeconds = kotlin.math.ceil(show.duration - 1e-6).toInt(), isLoaded = true,
+                show = show, showV = v
+            )
+        }
         val parsed = PlaylistTiming.parse(preset.optJSONObject("playlist"))
             ?.let { PlaylistTiming.expandRepeats(it) }
         if (parsed == null) {
@@ -1922,6 +1941,25 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             steps = steps, totalSeconds = kotlin.math.ceil(parsed.cycleSeconds - 1e-6).toInt(), isLoaded = true,
             parsed = parsed
         )
+    }
+
+    /**
+     * Bước hiển thị của 1 file show trên bảng timeline: clip hàng toàn mạch trước, rồi clip theo phân đoạn
+     * (tên kèm "đoạn ›"). [DevicePlaylistStep.presetId] = 0 (show không dùng preset từng clip).
+     */
+    private fun showSteps(show: ShowFile.Parsed): List<DevicePlaylistStep> {
+        val segName = show.segments.associate { it.key to it.name }
+        return show.clips.sortedWith(compareBy({ it.segment != null }, { it.start })).map { c ->
+            val label = c.segment?.let { "${segName[it] ?: it} › ${c.name}" } ?: c.name
+            DevicePlaylistStep(
+                presetId = 0,
+                presetName = label.ifBlank { "Clip" },
+                durationSeconds = c.duration.toFloat(),
+                transitionSeconds = c.transition.toFloat(),
+                startSecond = c.start.toFloat(),
+                endSecond = (c.start + c.duration).toFloat()
+            )
+        }
     }
 
     /**
@@ -2027,7 +2065,23 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             setClockAt(startFrom)
             startAudio(audio)
 
+            // Mạch phát show: cứ 2 s gửi vị trí đồng hồ (theo nhạc) để mạch bám — như desktop. Mạch chậm hơn thì
+            // đuổi kịp ngay; nhanh hơn thì lùi lại khi vài lần liền cùng báo (firmware lọc trễ mạng).
+            var lastSyncMs = System.currentTimeMillis()
+            var syncJob: kotlinx.coroutines.Job? = null
             while (_playlistPlaybackState.value == PlaylistPlaybackState.Running) {
+                val wallMs = System.currentTimeMillis()
+                if (wallMs - lastSyncMs >= SHOW_SYNC_INTERVAL_MS && syncJob?.isActive != true) {
+                    lastSyncMs = wallMs
+                    val showIps = showPlayingIps()
+                    if (showIps.isNotEmpty()) {
+                        val cycle = if (length > 0 && playbackLoop) clockSeconds() % length else clockSeconds()
+                        val body = ShowDevice.syncCommand(Math.round(cycle * 1000))
+                        syncJob = viewModelScope.launch(Dispatchers.IO) {
+                            showIps.map { ip -> async { runCatching { WledHttp.postState(ip, body, timeoutSec = 2) } } }.awaitAll()
+                        }
+                    }
+                }
                 var now = clockSeconds()
                 if (length > 0 && now >= length) {
                     if (playbackLoop) {
@@ -2074,16 +2128,24 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val online = devices.value.filter { it.isOnline }
-        val targets = online.filter { !MockDevice.isMock(it.ipAddress) && _devicesTimelines.value[it.id]?.parsed != null }
+        val timelines = _devicesTimelines.value
+        val targets = online.filter {
+            !MockDevice.isMock(it.ipAddress) && (timelines[it.id]?.parsed != null || timelines[it.id]?.isShow == true)
+        }
         val skipped = online.filter { !MockDevice.isMock(it.ipAddress) && it !in targets }.map { it.name }
         if (skipped.isNotEmpty()) log("Phát tiếp: bỏ qua ${skipped.joinToString()} (không đọc được playlist $playlistId).", "WARN")
         if (targets.isEmpty()) return
-        // Còn cha mà đang chạy 249 → FW bỏ qua playlist mới (tua không ăn). Dọn trước.
-        resetPlaylistStates(targets.map { it.ipAddress })
+        val shows = targets.filter { timelines[it.id]?.isShow == true }
+        // Còn cha mà đang chạy 249 → FW bỏ qua playlist mới (tua không ăn). Dọn trước (không gửi cho mạch phát show:
+        // lệnh dọn có "seg" → trình phát coi là bị chiếm mạch, show dừng).
+        resetPlaylistStates((targets - shows.toSet()).map { it.ipAddress })
         val at = if (liveClock) clockSeconds() else offset
         val bodies = LinkedHashMap<String, String>()
+        // Trình phát show tự nhảy tới vị trí (cả khi đang phát / tạm dừng): Phát tiếp, Tua, Phát từ playhead.
+        for (d in shows) bodies[d.ipAddress] = PresetJson.compact(ShowDevice.playCommand(Math.round(at * 1000)))
         for (d in targets) {
-            val parsed = _devicesTimelines.value[d.id]?.parsed ?: continue
+            if (d in shows) continue
+            val parsed = timelines[d.id]?.parsed ?: continue
             val entries = PlaylistTiming.resumeEntries(parsed, at)
             val body = org.json.JSONObject().put("on", true)
                 .put("seg", org.json.JSONArray().put(org.json.JSONObject().put("id", 0).put("frz", false)))
@@ -2099,18 +2161,38 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         reportTogether("Phát tiếp playlist $playlistId", online, postStateTogether(bodies))
     }
 
-    /** Tắt LED mọi mạch cùng lúc, rồi dọn + gỡ hẳn playlist (chỉ `on:false` thì playlist vẫn treo trên mạch). */
+    /** Mạch online đang có timeline dạng file show (249 = lệnh phát show). */
+    private fun showPlayingIps(): List<String> {
+        val timelines = _devicesTimelines.value
+        return devices.value.filter { it.isOnline && !MockDevice.isMock(it.ipAddress) && timelines[it.id]?.isShow == true }
+            .map { it.ipAddress }
+    }
+
+    /**
+     * Tắt LED mọi mạch cùng lúc. Mạch playlist: rồi dọn + gỡ hẳn playlist (chỉ `on:false` thì playlist vẫn treo
+     * trên mạch). Mạch phát show: dừng show (trả bố cục cũ) + tắt đèn — trình phát v7 làm trong 1 lệnh, không nháy
+     * lại hình cũ; mạch cũ dừng rồi mới tắt ([ShowDevice.stopAndOff]).
+     */
     private suspend fun sendStopTogether(label: String) {
         val online = devices.value.filter { it.isOnline }
         if (online.isEmpty()) return
-        val pending = postStateTogether(online.map { it.ipAddress }, OFF_BODY)
+        val timelines = _devicesTimelines.value
+        val showV = online.filter { timelines[it.id]?.isShow == true && !MockDevice.isMock(it.ipAddress) }
+            .associate { it.ipAddress to (ShowDevice.cached(it.ipAddress) ?: timelines[it.id]!!.showV) }
+        val bodies = online.associate { d ->
+            d.ipAddress to (showV[d.ipAddress]?.let { PresetJson.compact(ShowDevice.firstStopCommand(it)) } ?: OFF_BODY)
+        }
+        val pending = postStateTogether(bodies)
         viewModelScope.launch(Dispatchers.IO) {
             online.map { d ->
                 async {
                     val r = pending[d.ipAddress]?.await() ?: return@async
                     if (r.isSuccess) {
                         repository.updateDeviceInDb(d.copy(isOn = false, lastSeenTimestamp = System.currentTimeMillis()))
-                        if (!MockDevice.isMock(d.ipAddress)) runCatching {
+                        val v = showV[d.ipAddress]
+                        if (v != null) {
+                            runCatching { ShowDevice.stopAndOff(d.ipAddress, v, firstSent = true) }
+                        } else if (!MockDevice.isMock(d.ipAddress)) runCatching {
                             resetPlaylistState(d.ipAddress, freeze = false)
                             postState(d.ipAddress, UNLOAD_PLAYLIST_BODY, timeoutSec = 2)
                         }
@@ -2155,10 +2237,19 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 log("Đã tạm dừng kịch bản, nhưng hiện không có thiết bị online.", "WARN")
                 return@launch
             }
-            val pending = postStateTogether(online.map { it.ipAddress }, FREEZE_BODY)
+            // Mạch phát show: trình phát tự giữ vị trí + đóng băng đúng khung tại vị trí đồng hồ (lệnh "seg" như
+            // FREEZE_BODY sẽ bị coi là bị chiếm mạch → show dừng).
+            val showIps = showPlayingIps().toSet()
+            val pauseBody = PresetJson.compact(ShowDevice.pauseCommand(Math.round(_playlistElapsedSeconds.value * 1000.0)))
+            val pending = postStateTogether(online.associate { d ->
+                d.ipAddress to (if (d.ipAddress in showIps) pauseBody else FREEZE_BODY)
+            })
             val results = pending.mapValues { it.value.await() }
             // Chỉ freeze thì tới bước kế mạch nạp preset mới và tự hết đóng băng → dừng hẳn playlist (giữ frz).
-            resetPlaylistStates(online.filter { results[it.ipAddress]?.isSuccess == true }.map { it.ipAddress }, freeze = true)
+            resetPlaylistStates(
+                online.filter { it.ipAddress !in showIps && results[it.ipAddress]?.isSuccess == true }.map { it.ipAddress },
+                freeze = true
+            )
             val failed = online.filter { results[it.ipAddress]?.isSuccess != true }
             if (failed.isEmpty()) {
                 log("Đã tạm dừng kịch bản tại ${String.format(java.util.Locale.US, "%.1f", _playlistElapsedSeconds.value)} s trên ${online.size} thiết bị.", "INFO")
@@ -2199,6 +2290,10 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
 
     // 249 is a fixed playlist slot, but user-requested preset cleanup is allowed to delete it.
     private val systemPresetSlots = PresetSlots.SYSTEM
+    /** Tên show ghi lên mạch (cùng desktop: "Timecode <slot>"). */
+    private val SHOW_NAME = "Timecode ${PresetSlots.PLAYLIST}"
+    /** Mạch phát show: chu kỳ gửi vị trí đồng hồ (desktop SHOW_SYNC_INTERVAL_MS). */
+    private val SHOW_SYNC_INTERVAL_MS = 2000L
     private val protectedPresetSlots = setOf(PresetSlots.AUTOSAVE, PresetSlots.OFF, PresetSlots.BUTTON)
     private val playlistPresetSlot = PresetSlots.PLAYLIST
 
@@ -2340,7 +2435,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             recipeCount = t.recipeCount,
             pendingBakeCount = t.pendingBakeCount,
             autoIp = m?.ip,
-            matchNote = note
+            matchNote = note,
+            segmentCount = t.segments.size,
+            segmentClipCount = t.segmentClipCount
         )
     }
 
@@ -2457,6 +2554,9 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 throw Exception("Không kết nối được mạch ($ip). Kiểm tra nguồn và WiFi.")
             }
             deviceMac = identity.mac
+            if (identity.showV >= ShowFile.MIN_PLAYER_VERSION) {
+                return@withContext importTrackAsShow(file, track, ip, deviceName, timelineSeconds, identity)
+            }
             val pmax = identity.pmax
             val sameDevice = !track.isMock && if (track.mac.isNotEmpty() && identity.mac.isNotEmpty()) {
                 identity.mac == track.mac
@@ -2464,13 +2564,19 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 ip == track.ip
             }
 
+            // Firmware cũ (chỉ playlist): clip theo phân đoạn không biên dịch được → chỉ hàng toàn mạch.
+            val (boardClips, droppedSegClips) = ShowPlanner.boardRowClips(track)
             val presetsText = fetchPresetsText(ip)
             val presets = parsePresetsText(presetsText)
-            var plan = TimecodePlanner.plan(track.clips, file.recipeTable, file.recipeCache, presets, pmax, sameDevice, null)
+            var plan = TimecodePlanner.plan(boardClips, file.recipeTable, file.recipeCache, presets, pmax, sameDevice, null)
             if (plan.needsDeviceFiles) {
                 val files = listDeviceFilePaths(ip)
-                plan = TimecodePlanner.plan(track.clips, file.recipeTable, file.recipeCache, presets, pmax, sameDevice, files)
+                plan = TimecodePlanner.plan(boardClips, file.recipeTable, file.recipeCache, presets, pmax, sameDevice, files)
             }
+            val warnings = plan.warnings + listOfNotNull(
+                if (droppedSegClips > 0) "$droppedSegClips clip theo phân đoạn bị bỏ: firmware của mạch chưa có trình phát " +
+                    "show (cần 2611163 trở lên) — chỉ phát hàng toàn mạch." else null
+            )
             if (plan.problems.isNotEmpty()) {
                 throw Exception("Không nạp để tránh phát sai:\n• " + plan.problems.joinToString("\n• "))
             }
@@ -2511,7 +2617,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 "Timecode: nạp ${applied.clipCount} clip \"${track.name}\" → $deviceName ($ip). " + details.joinToString("; "),
                 "INFO"
             )
-            plan.warnings.forEach { log("Timecode $deviceName: $it", "WARN") }
+            warnings.forEach { log("Timecode $deviceName: $it", "WARN") }
             TimecodeUploadResult(
                 trackKey = track.index,
                 trackName = track.name,
@@ -2521,7 +2627,7 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 clipCount = applied.clipCount,
                 success = true,
                 details = details,
-                warnings = plan.warnings
+                warnings = warnings
             )
         } catch (e: Exception) {
             android.util.Log.e("WledViewModel", "Timecode upload failed for $ip", e)
@@ -2537,6 +2643,74 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 error = e.message ?: "Lỗi không xác định"
             )
         }
+    }
+
+    /**
+     * Mạch có trình phát show (firmware 2611163+, như desktop "Ghi vào mạch"): ghi ảnh → /show.jsonl (phân
+     * đoạn, clip theo phân đoạn, preset nhiều lớp, vạch đánh dấu) → nạp, chờ mạch báo đủ clip → 249 = lệnh
+     * phát show, 248 = dừng show + tắt (nút bấm). Không ghi preset cho từng clip. Lỗi → ném (không ghi 249).
+     */
+    private suspend fun importTrackAsShow(
+        file: TimecodeFile,
+        track: TimelineTrack,
+        ip: String,
+        deviceName: String,
+        timelineSeconds: Double,
+        identity: DeviceIdentity
+    ): TimecodeUploadResult {
+        val v = identity.showV
+        val presetsText = fetchPresetsText(ip)
+        val presets = parsePresetsText(presetsText)
+        var plan = ShowPlanner.plan(track, file.recipeTable, file.recipeCache, presets, null, v)
+        if (plan.needsDeviceFiles) {
+            plan = ShowPlanner.plan(track, file.recipeTable, file.recipeCache, presets, listDeviceFilePaths(ip), v)
+        }
+        if (plan.problems.isNotEmpty()) {
+            throw Exception("Không nạp để tránh phát sai:\n• " + plan.problems.joinToString("\n• "))
+        }
+        if (plan.clips.isEmpty()) throw Exception("Track không có clip hợp lệ")
+        val built = ShowFile.buildShow(
+            name = SHOW_NAME,
+            segments = track.segments,
+            clips = plan.clips,
+            duration = timelineSeconds,
+            loop = file.loop,
+            marks = if (v >= ShowFile.MARKS_PLAYER_VERSION) file.marks else emptyList(),
+            layers = v >= ShowFile.LAYERS_PLAYER_VERSION
+        )
+        // Ảnh trước, file show sau (hình ảnh tham chiếu ảnh qua seg[].n).
+        for ((path, bytes) in plan.uploads) uploadImageWithRetry(ip, path, bytes)
+        ShowDevice.uploadAndLoad(ip, built.text)
+        backupPresets(identity.mac.ifEmpty { ip }, presetsText, ip)
+        presets.put(PresetSlots.PLAYLIST.toString(), ShowFile.playPreset(SHOW_NAME))
+        presets.put(PresetSlots.OFF.toString(), ShowFile.offPreset())
+        uploadPresetsVerified(ip, presets, listOf(PresetSlots.OFF, PresetSlots.PLAYLIST))
+        verifiedIps += ip
+
+        val clipCount = ShowFile.clipCount(built.text)
+        val warnings = plan.warnings + built.warnings
+        val details = buildList {
+            add("Ghi file show (trình phát v$v): $clipCount clip, không cần preset từng clip")
+            if (track.segments.isNotEmpty()) add("${track.segments.size} phân đoạn · ${plan.segmentClipCount} clip theo phân đoạn")
+            if (plan.layeredClipCount > 0 && v >= ShowFile.LAYERS_PLAYER_VERSION) {
+                add("${plan.layeredClipCount} clip preset nhiều lớp chạy đủ lớp")
+            }
+            if (plan.uploads.isNotEmpty()) add("${plan.uploads.size} ảnh tải lên")
+            add("249 = phát show, 248 = dừng show + tắt đèn")
+        }
+        log("Timecode: nạp $clipCount clip \"${track.name}\" → $deviceName ($ip) dạng file show. " + details.joinToString("; "), "INFO")
+        warnings.forEach { log("Timecode $deviceName: $it", "WARN") }
+        return TimecodeUploadResult(
+            trackKey = track.index,
+            trackName = track.name,
+            deviceName = deviceName,
+            deviceIp = ip,
+            deviceMac = identity.mac,
+            clipCount = clipCount,
+            success = true,
+            details = details,
+            warnings = warnings
+        )
     }
 
     /** "60–63, 70, 256" từ danh sách slot. */
@@ -2664,6 +2838,20 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
         return try {
             val text = fetchPresetsText(d.ipAddress)
             val presets = parsePresetsText(text)
+            if (ShowFile.isPlayPreset(presets.opt(playlistId.toString()))) {
+                // 249 = lệnh phát show (desktop "Ghi vào mạch" / app nạp file show): KHÔNG ghi đè bằng playlist
+                // từ lần nạp cũ. Chỉ cần file show trên mạch đọc được; thiếu 248 thì ghi lại (nút Tắt đèn dừng show).
+                if (ShowFile.parseShow(ShowDevice.readShow(d.ipAddress)) == null) {
+                    return "⚠ ${d.name}: 249 phát show nhưng mạch không có file /show.jsonl đọc được — hãy nạp lại timeline."
+                }
+                if (!PresetSlots.isNonEmptyPreset(presets.opt(PresetSlots.OFF.toString()))) {
+                    backupPresets(d.mac ?: d.ipAddress, text, d.ipAddress)
+                    presets.put(PresetSlots.OFF.toString(), ShowFile.offPreset())
+                    uploadPresetsVerified(d.ipAddress, presets, listOf(PresetSlots.OFF))
+                    log("Kiểm tra trước khi phát: đã ghi lại TIMELINE_OFF (248) cho ${d.name}.", "INFO")
+                }
+                return null
+            }
             val pmax = PresetSlots.pmaxHint(d.pmax, presets)
             val ids = TimecodePlanner.playlistIds(presets, playlistId)
             val missing = if (ids == null) listOf(playlistId) else TimecodePlanner.missingPlaylistRefs(presets, ids, pmax)
@@ -2787,9 +2975,10 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
     // Đọc / ghi presets.json an toàn
     // ---------------------------------------------------------------------------
 
-    private class DeviceIdentity(val mac: String, val pmax: Int)
+    /** [showV] = phiên bản trình phát show (`show.v`, 0 = firmware chỉ phát playlist). */
+    private class DeviceIdentity(val mac: String, val pmax: Int, val showV: Int = 0)
 
-    /** GET /json/info → MAC chuẩn hoá + pmax (thiếu = 250, không suy từ vid). */
+    /** GET /json/info → MAC chuẩn hoá + pmax (thiếu = 250, không suy từ vid) + phiên bản trình phát show. */
     private suspend fun fetchDeviceIdentity(ip: String): DeviceIdentity = withContext(Dispatchers.IO) {
         val text = if (MockDevice.isMock(ip)) {
             MockDevice.cannedInfoJson()
@@ -2801,9 +2990,12 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         val info = org.json.JSONObject(text)
+        val showV = ShowFile.playerVersion(info)
+        ShowDevice.remember(ip, showV)
         DeviceIdentity(
             mac = normMac(info.optString("mac")),
-            pmax = PresetSlots.pmaxOrLegacy(info.optJSONObject("fs")?.optInt("pmax", 0))
+            pmax = PresetSlots.pmaxOrLegacy(info.optJSONObject("fs")?.optInt("pmax", 0)),
+            showV = showV
         )
     }
 
@@ -3497,9 +3689,13 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             for (device in targets) {
                 val clips = _editorClips.value[device.id] ?: continue
                 try {
-                    withContext(Dispatchers.IO) {
+                    val showNote = withContext(Dispatchers.IO) {
                         val text = fetchPresetsText(device.ipAddress)
                         val presets = parsePresetsText(text)
+                        val v = if (MockDevice.isMock(device.ipAddress)) 0 else ShowDevice.probeVersion(device.ipAddress)
+                        if (v >= ShowFile.MIN_PLAYER_VERSION) {
+                            return@withContext uploadEditorShow(device, clips, presets, text, total, loop, v)
+                        }
                         val pmax = PresetSlots.pmaxHint(device.pmax, presets)
                         val entries = clips.map {
                             TimecodePlanner.PlaylistEntry(
@@ -3538,8 +3734,10 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                         verifiedIps += device.ipAddress
                         // 249 giờ do tab Biên Tập ghi → không ghi lại từ file timecode cũ nữa.
                         forgetLastImportFor(device.ipAddress, device.mac)
+                        null
                     }
-                    results += "${device.name}: OK (${clips.size} clip, ${if (loop) "lặp" else "chạy 1 lần"})"
+                    results += "${device.name}: OK (${clips.size} clip, ${if (loop) "lặp" else "chạy 1 lần"}" +
+                        (showNote?.let { ", $it" } ?: "") + ")"
                 } catch (e: Exception) {
                     hadError = true
                     android.util.Log.e("WledViewModel", "compile editor timeline failed for ${device.ipAddress}", e)
@@ -3555,6 +3753,64 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
             fetchTimelinesForAllDevices(249)
             onDone()
         }
+    }
+
+    /**
+     * Tab Biên Tập → mạch có trình phát show: ghi file show thay cho playlist 249. Hình ảnh clip lấy từ preset
+     * trên mạch (preset nhiều phân đoạn chạy đủ lớp trên trình phát v6). Tab này chỉ sửa hàng toàn mạch: phân
+     * đoạn + clip theo phân đoạn của show đang có trên mạch (desktop tạo) được giữ nguyên.
+     * @return ghi chú cho dòng kết quả.
+     */
+    private suspend fun uploadEditorShow(
+        device: WledDevice,
+        clips: List<TimelineClip>,
+        presets: org.json.JSONObject,
+        presetsText: String,
+        total: Double,
+        loop: Boolean,
+        v: Int
+    ): String {
+        val nested = TimelineEditing.nestedPlaylistRefs(presets, clips.map { it.presetId })
+        if (nested.isNotEmpty()) {
+            throw Exception("preset ${nested.joinToString()} là playlist — playlist lồng sẽ thay timeline đang chạy, hãy dùng preset thường")
+        }
+        val missing = clips.filter { presets.optJSONObject(it.presetId.toString())?.let { p -> ShowFile.clipLook(p) } == null }
+        if (missing.isNotEmpty()) {
+            throw Exception(
+                "preset ${missing.map { it.presetId }.distinct().joinToString()} không còn trên mạch " +
+                    "(${missing.map { it.presetName }.distinct().joinToString()}) — kéo lại clip từ danh sách preset"
+            )
+        }
+        val existing = if (ShowFile.isPlayPreset(presets.opt(PresetSlots.PLAYLIST.toString()))) {
+            ShowFile.parseShow(ShowDevice.readShow(device.ipAddress))
+        } else null
+        val kept = existing?.clips.orEmpty().filter { it.segment != null }
+        val showClips = clips.map { c ->
+            val p = presets.getJSONObject(c.presetId.toString())
+            ShowFile.Clip(
+                null, c.startSec.toDouble(), c.durationSec.toDouble(), c.transitionSec.toDouble(), c.presetName,
+                ShowFile.clipLook(p), ShowFile.clipLooks(p)
+            )
+        } + kept
+        val length = maxOf(total, kept.maxOfOrNull { it.start + it.duration } ?: 0.0)
+        val built = ShowFile.buildShow(
+            name = SHOW_NAME,
+            segments = existing?.segments.orEmpty(),
+            clips = showClips,
+            duration = length,
+            loop = loop,
+            marks = if (v >= ShowFile.MARKS_PLAYER_VERSION) existing?.marks.orEmpty() else emptyList(),
+            layers = v >= ShowFile.LAYERS_PLAYER_VERSION
+        )
+        built.warnings.forEach { log("Biên tập ${device.name}: $it", "WARN") }
+        ShowDevice.uploadAndLoad(device.ipAddress, built.text)
+        backupPresets(device.mac ?: device.ipAddress, presetsText, device.ipAddress)
+        presets.put(PresetSlots.PLAYLIST.toString(), ShowFile.playPreset(SHOW_NAME))
+        presets.put(PresetSlots.OFF.toString(), ShowFile.offPreset())
+        uploadPresetsVerified(device.ipAddress, presets, listOf(PresetSlots.OFF, PresetSlots.PLAYLIST))
+        verifiedIps += device.ipAddress
+        forgetLastImportFor(device.ipAddress, device.mac)
+        return "file show" + if (kept.isNotEmpty()) ", giữ ${kept.size} clip phân đoạn" else ""
     }
 
     /**
@@ -3585,6 +3841,12 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                     continue
                 }
                 _editorPresets.value = _editorPresets.value + (d.id to editablePresetsOf(presets))
+                if (ShowFile.isPlayPreset(presets.opt(PresetSlots.PLAYLIST.toString()))) {
+                    val note = loadEditorClipsFromShow(d, presets)
+                    results += note.first
+                    if (note.second != null) { loaded++; if (loop == null) loop = note.second }
+                    continue
+                }
                 val parsed = PlaylistTiming.parse(
                     presets.optJSONObject(PresetSlots.PLAYLIST.toString())?.optJSONObject("playlist")
                 )
@@ -3621,6 +3883,41 @@ class WledViewModel(application: Application) : AndroidViewModel(application) {
                 error = if (loaded == 0) "Không mạch nào có playlist ${PresetSlots.PLAYLIST} — giữ nguyên timeline." else null
             )
         }
+    }
+
+    /**
+     * Mạch có 249 = lệnh phát show: dựng lại clip hàng toàn mạch từ /show.jsonl (mỗi clip trỏ preset trên mạch có
+     * cùng hình ảnh). Clip theo phân đoạn không sửa được ở tab này — được giữ nguyên khi ghi lại.
+     * @return (dòng kết quả, Lặp của show — null = không dựng được, giữ nguyên track).
+     */
+    private suspend fun loadEditorClipsFromShow(d: WledDevice, presets: org.json.JSONObject): Pair<String, Boolean?> {
+        val show = ShowFile.parseShow(ShowDevice.readShow(d.ipAddress))
+            ?: return "${d.name}: 249 phát show nhưng không đọc được /show.jsonl — giữ nguyên track" to null
+        val board = show.clips.filter { it.segment == null }
+        var unmatched = 0
+        val clips = board.mapNotNull { c ->
+            val pid = ShowPlanner.presetForClip(presets, c)
+            if (pid == null) { unmatched++; return@mapNotNull null }
+            TimelineClip(
+                id = nextEditorClipId++,
+                deviceId = d.id,
+                presetId = pid,
+                presetName = PresetCleanup.presetName(presets, pid),
+                startSec = c.start.toFloat(),
+                durationSec = c.duration.toFloat(),
+                transitionSec = c.transition.toFloat()
+            )
+        }
+        updateDeviceClips(d.id, clips)
+        val segClips = show.clips.size - board.size
+        val notes = buildList {
+            add("${clips.size} clip")
+            add(String.format(java.util.Locale.US, "%.1f", show.duration) + " s")
+            add(if (show.loop) "lặp" else "chạy 1 lần")
+            if (segClips > 0) add("$segClips clip phân đoạn giữ nguyên (sửa trên Tool desktop)")
+            if (unmatched > 0) add("$unmatched clip không còn preset giống trên mạch — bỏ qua")
+        }
+        return "${d.name}: file show · " + notes.joinToString(" · ") to show.loop
     }
 
     fun dismissEditorUpload() {
@@ -3707,7 +4004,10 @@ data class TimecodeTrackItem(
     val pendingBakeCount: Int,
     /** IP mạch app tự nhận (theo MAC/IP), null = chưa nhận được. */
     val autoIp: String?,
-    val matchNote: String?
+    val matchNote: String?,
+    /** Phân đoạn của track (desktop v3.17.5+) và số clip chạy theo phân đoạn — cần mạch có trình phát show. */
+    val segmentCount: Int = 0,
+    val segmentClipCount: Int = 0
 )
 
 /** Kết quả nạp 1 track lên 1 mạch, hiện ở dialog kết quả. */
@@ -3865,9 +4165,14 @@ data class DevicePlaylistTimeline(
     /** Playlist đọc từ mạch (đã trải `repeat` N); null = preset thường / lỗi / mock. */
     val parsed: PlaylistTiming.Parsed? = null,
     /** Đọc được presets.json nhưng KHÔNG có preset [playlistId] → khi Phát không gửi gì tới mạch này. */
-    val noPlaylist: Boolean = false
+    val noPlaylist: Boolean = false,
+    /** 249 là lệnh phát show (mạch có trình phát show): file /show.jsonl đã đọc; null = playlist / lỗi. */
+    val show: ShowFile.Parsed? = null,
+    /** `show.v` của mạch lúc đọc (chọn lệnh dừng: v7 dừng + tắt 1 bước). */
+    val showV: Int = 0
 ) {
-    val loop: Boolean get() = parsed?.loop == true
+    val isShow: Boolean get() = show != null
+    val loop: Boolean get() = (parsed?.loop ?: show?.loop) == true
     /** Thời lượng 1 lần phát (giây, chính xác). */
-    val playSeconds: Double get() = parsed?.cycleSeconds ?: 0.0
+    val playSeconds: Double get() = show?.duration ?: parsed?.cycleSeconds ?: 0.0
 }

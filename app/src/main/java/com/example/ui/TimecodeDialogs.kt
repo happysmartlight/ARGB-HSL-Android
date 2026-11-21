@@ -327,6 +327,10 @@ internal fun TimecodeMappingRow(
                     append(" • ${track.clipCount} clip")
                     if (track.recipeCount > 0) append(" • ${track.recipeCount} có nội dung preset")
                     if (track.pendingBakeCount > 0) append(" • ${track.pendingBakeCount} chưa ghi")
+                    if (track.segmentCount > 0) {
+                        append(" • ${track.segmentCount} phân đoạn")
+                        if (track.segmentClipCount > 0) append(" (${track.segmentClipCount} clip theo đoạn)")
+                    }
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = dim,

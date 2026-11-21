@@ -42,6 +42,30 @@ object WledHttp {
         JSONObject(getText(ip, "/json"))
     }
 
+    /** GET /json/info. */
+    suspend fun getInfo(ip: String, timeoutSec: Long = 4): JSONObject = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(ip)) return@withContext JSONObject(MockDevice.cannedInfoJson())
+        JSONObject(getText(ip, "/json/info", timeoutSec))
+    }
+
+    /** GET /json/state. */
+    suspend fun getState(ip: String, timeoutSec: Long = 3): JSONObject = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(ip)) return@withContext JSONObject("{}")
+        JSONObject(getText(ip, "/json/state", timeoutSec))
+    }
+
+    /** GET 1 file văn bản (vd /show.jsonl); null = mạch không có file đó (HTTP 404). */
+    suspend fun getTextOrNull(ip: String, path: String, timeoutSec: Long = 8): String? = withContext(Dispatchers.IO) {
+        if (MockDevice.isMock(ip)) return@withContext null
+        val request = Request.Builder().url("http://$ip$path").build()
+        clientFor(timeoutSec).newCall(request).execute().use { r ->
+            if (r.code == 404) return@withContext null
+            if (r.code == 401) throw Exception("mạch đang khoá PIN")
+            if (!r.isSuccessful) throw Exception("HTTP ${r.code}")
+            r.body?.string()
+        }
+    }
+
     /** GET /json/si (state + info, nhẹ hơn nhiều so với /json). */
     suspend fun getStateInfo(ip: String): JSONObject = withContext(Dispatchers.IO) {
         if (MockDevice.isMock(ip)) return@withContext MockDevice.cannedFullJson().apply { remove("effects"); remove("palettes") }

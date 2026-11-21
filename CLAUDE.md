@@ -140,8 +140,8 @@ timeline editor, migration DB…).
 ## Dòng mạch & ID preset
 
 - Sản phẩm hợp lệ (`WledDevice.VALID_PRODUCTS`, đồng bộ desktop `scan_worker.py`): ARGB HSL
-  Controller, 2X, **2X Pro**, 4X, 8X. ⚠ `pingDevice` **xoá** thiết bị có product lạ → thêm dòng
-  mạch mới phải sửa danh sách này.
+  Controller, 2X, **2X Pro**, 4X, 8X, **16X** (thêm v1.10 — bản cũ xoá mạch 16X). ⚠ `pingDevice` **xoá**
+  thiết bị có product lạ → thêm dòng mạch mới phải sửa danh sách này.
 - `WledDevice.mac` (12 hex thường, `normMac`) + `pmax` lưu mỗi lần ping từ `/json/info`.
 - Firmware ≥ 2611090 (2X Pro / 4X): preset ID tới `fs.pmax` (1024). Thiếu `pmax` = 250, KHÔNG suy
   từ `vid`. **Không bao giờ** ghi/xoá/tham chiếu 251–255; không `pdel` 250. Nguồn sự thật:
@@ -204,7 +204,41 @@ trên track thật). Luồng (`WledViewModel.prepareTimecodeImport` / `confirmTi
 - Nhạc: Android không đọc được thư mục chứa file timeline → tự chọn nếu tên file trùng lịch sử
   nhạc, không thì dialog kết quả có nút "Chọn nhạc".
 
+## Trình phát show của firmware (v1.10, đồng bộ desktop Tool ARGB HSL v3.17.11)
+
+Firmware 2611163+ có usermod show_player: `/json/info` → `show.v` (0 = chỉ playlist). Mạch có trình phát
+show phát Timecode từ file `/show.jsonl` (phân đoạn, clip theo phân đoạn, preset nhiều lớp, vạch đánh dấu)
+thay cho playlist 249; **preset 249 = lệnh phát show** `{"show":{"load":true,"play":0}}`, **248** = 64 segment
+đen + `show.stop` (nút bấm tắt đèn dừng được show; dùng cho mọi mạch, firmware cũ bỏ qua khoá `show`).
+
+- Logic thuần: `data/ShowFile.kt` (port `services/show_file.py`: build/parse, `Segment`, `clipLook(s)`,
+  `lookSegments`, preset 249/248, hằng phiên bản) + `data/ShowPlanner.kt` (track file desktop → clip show,
+  ảnh cần upload, lỗi; `boardRowClips` cho mạch cũ; `presetForClip` dựng lại clip tab Biên Tập). Test:
+  `ShowFileTest`, `ShowPlannerTest` (có preset "Chữ chạy" thật của 4X).
+- Mạng: `data/ShowDevice.kt` (cache `show.v` theo IP — ping `/json/si` ghi vào; `uploadAndLoad` ghi file +
+  `load` rồi chờ `show.clips` đúng; `stopAndOff`).
+- Phiên bản: v2 marks · v3 lớp toàn khung · v5 phân đoạn "Thứ tự LED" (`lo`, 2611211) · **v6 preset nhiều lớp**
+  (`seg` mảng look + `area`, 2611213) · **v7 `stop`+`off`** (dừng + tắt 1 bước, không nháy — 2611214).
+- **Nhập file timeline** (`importTrackToDevice` → `importTrackAsShow`): mạch `show.v` ≥ 1 → ghi ảnh → file show
+  → nạp → 249/248, KHÔNG bake preset từng clip. Mạch cũ: playlist như trước nhưng chỉ hàng toàn mạch (clip theo
+  phân đoạn bị bỏ, có cảnh báo). Phân đoạn Thứ tự LED trên mạch < v5 → lỗi, không ghi.
+- **Bảng timeline tab ALL**: 249 là lệnh phát show → đọc `/show.jsonl` (`DevicePlaylistTimeline.show`, bước
+  presetId 0 = clip show).
+- **Phát** (`runPlaylistAllNow` / `sendPlaylistFrom`): mạch show nhận `{"on":true,"show":{"play":ms}}` (cả Phát
+  tiếp / Tua / Tiếp tục); cứ 2 s gửi `{"show":{"sync":ms}}`; **Tạm dừng** `{"show":{"pause":ms}}`; **Dừng / hết bài**
+  v7 `{"show":{"stop":true,"off":true}}`, mạch cũ dừng → chờ `st` 0 → `{"on":false,"tt":0}`. ⚠ KHÔNG gửi lệnh có
+  `seg` / `playlist` (`resetPlaylistState`, FREEZE_BODY, OFF_BODY) cho mạch đang phát show: trình phát coi là bị
+  chiếm mạch → show dừng, mạch trả hình cũ.
+- **Kiểm trước khi Phát**: 249 là lệnh phát show → chỉ kiểm `/show.jsonl` đọc được (+ ghi lại 248 nếu thiếu);
+  **không bao giờ** ghi đè bằng playlist từ lần nạp cũ (trước v1.10 app ghi đè show của desktop).
+- **Tab Biên Tập**: mạch show → "Nạp vào 249" ghi file show (hình ảnh từ preset trên mạch); tab chỉ sửa hàng toàn
+  mạch, **giữ nguyên phân đoạn + clip theo phân đoạn + vạch** của show đang có (desktop tạo). "Đọc 249 từ mạch"
+  dựng clip hàng toàn mạch từ file show (clip trỏ preset cùng hình ảnh), báo số clip phân đoạn giữ nguyên.
+- Đã thử trên 4X (16×16, firmware v7) qua máy ảo `argb_tablet` (2026-11-22): phát / tạm dừng / tiếp tục / dừng /
+  hết bài (không nháy), nhập file desktop (2 phân đoạn + "Chữ chạy" 2 lớp), Đọc + Nạp tab Biên Tập.
+
 ## Lưu ý khác
 
-- Thước timeline mặc định **khóa** (tránh lỡ tay tua); người dùng mở khóa bằng switch.
+- Thước timeline mặc định **khóa** (tránh lỡ tay tua); người dùng mở khóa bằng switch. Tab Biên Tập: nút
+  "Đọc 249 từ mạch" / kéo thả chỉ bật khi đã mở khoá ("Edit").
 - Nhạc nền mặc định: chỉ tải khi thiếu file (`downloadDefaultAudio` có `onlyIf`).

@@ -312,8 +312,15 @@ class TimelineTrack(
     val isMock: Boolean,
     /** MAC chuẩn hoá ("" nếu không có / mock). */
     val mac: String,
-    val clips: List<JSONObject>
+    val clips: List<JSONObject>,
+    /** Phân đoạn của mạch (desktop v3.17.5+, `tracks[].segments`); clip trỏ tới đoạn bằng `clips[].segment` = key. */
+    val segments: List<ShowFile.Segment> = emptyList()
 ) {
+    /** Clip chạy trên 1 phân đoạn (trỏ tới đoạn còn trong [segments]). */
+    val segmentClipCount: Int get() {
+        val keys = segments.map { it.key }.toSet()
+        return clips.count { it.optString("segment").let { k -> k.isNotEmpty() && k in keys } }
+    }
     val recipeCount: Int get() = clips.count { it.optJSONObject("recipe") != null }
     val pendingBakeCount: Int get() = clips.count { it.optJSONObject("bake_snapshot") != null }
     val endSeconds: Double get() = clips.maxOfOrNull { it.optDouble("start", 0.0) + it.optDouble("duration", 0.0) } ?: 0.0
@@ -327,6 +334,10 @@ class TimecodeFile private constructor(
     /** sha256 → byte ảnh; nhiều mạch được nạp song song nên dùng map an toàn đa luồng. */
     val recipeCache: MutableMap<String, ByteArray> = java.util.concurrent.ConcurrentHashMap()
     val loop: Boolean = config.optJSONObject("defaults")?.optBoolean("loop", false) ?: false
+    /** Vạch đánh dấu (phím T của desktop), giây — ghi kèm file show để desktop "Đọc từ mạch" dựng lại. */
+    val marks: List<Double> = config.optJSONArray("timing_marks")?.let { a ->
+        (0 until a.length()).mapNotNull { (a.opt(it) as? Number)?.toDouble() }
+    }.orEmpty()
     val audioPath: String? = config.optString("audio_path").takeIf { it.isNotBlank() && it != "null" }
     val audioRel: String? = config.optString("audio_rel").takeIf { it.isNotBlank() && it != "null" }
 
@@ -355,13 +366,17 @@ class TimecodeFile private constructor(
                 val clips = ArrayList<JSONObject>()
                 t.optJSONArray("clips")?.let { cs -> for (j in 0 until cs.length()) cs.optJSONObject(j)?.let { clips += it } }
                 val name = t.optString("name").ifBlank { mockNames[ip] ?: ip }
+                val segments = t.optJSONArray("segments")?.let { s ->
+                    (0 until s.length()).mapNotNull { ShowFile.Segment.fromDict(s.optJSONObject(it)) }
+                }.orEmpty()
                 tracks += TimelineTrack(
                     index = i,
                     ip = ip,
                     name = if (isMock) (mockNames[ip] ?: name) else name,
                     isMock = isMock,
                     mac = if (isMock) "" else normMac(t.optString("mac")),
-                    clips = clips
+                    clips = clips,
+                    segments = segments
                 )
             }
             return TimecodeFile(config, tracks)
@@ -642,14 +657,12 @@ object TimecodePlanner {
         return Compiled(playlist, ps)
     }
 
-    fun timelineOffPreset(): JSONObject = JSONObject().apply {
-        put("n", "TIMELINE_OFF")
-        put("seg", JSONArray().put(JSONObject().apply {
-            put("id", 0)
-            put("fx", 0)
-            put("col", JSONArray().put(JSONArray().put(0).put(0).put(0)))
-        }))
-    }
+    /**
+     * Slot OFF 248 — cùng nội dung với desktop v3.17.5+ (`preset_groups.off_preset_payload`): mọi segment
+     * Solid đen + bỏ đóng băng + dừng show (mạch có trình phát show). Trước đây chỉ phủ đen segment 0: mạch
+     * chia nhiều segment bấm nút tắt thì các đoạn còn lại vẫn sáng, và nút không dừng được show.
+     */
+    fun timelineOffPreset(): JSONObject = ShowFile.offPreset()
 
     fun playlistPreset(playlist: JSONObject, name: String): JSONObject = JSONObject().apply {
         put("playlist", playlist)

@@ -82,6 +82,7 @@ class WledRepository(
                 mac = normMac(info?.mac).ifEmpty { null },
                 pmax = info?.fs?.pmax?.takeIf { it > 0 }
             )
+            if (info != null) ShowDevice.remember(device.ipAddress, info.show?.v ?: 0)
             val prod = info?.product
             if (prod != null && !WledDevice.isValidProduct(prod)) {
                 wledDao.deleteDevice(device)

@@ -30,7 +30,8 @@ data class WledDevice(
             "ARGB HSL Controller 2X",
             "ARGB HSL Controller 2X Pro",
             "ARGB HSL Controller 4X",
-            "ARGB HSL Controller 8X"
+            "ARGB HSL Controller 8X",
+            "ARGB HSL Controller 16X"
         )
 
         fun isValidProduct(product: String?): Boolean {

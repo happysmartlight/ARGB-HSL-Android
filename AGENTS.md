@@ -49,7 +49,9 @@ Spec: `docs/timecode-json-android-plugin.md` + `docs/android-timecode-recipe-tas
 Luồng: chọn file → liệt kê mọi track (mock + mạch thật; mạch thật tự gán theo MAC/IP) →
 đối chiếu `presets.json` từng mạch theo `recipe` (ghi lại preset bị mất) → bake vào slot trống
 (60–240 rồi 256..`pmax`, né 100/248/249/250 và 251–255) → playlist 249 → upload dạng gọn + đọc lại.
-Chi tiết đầy đủ: xem `CLAUDE.md`.
+Mạch có trình phát show (firmware 2611163+, `/json/info` → `show.v` ≥ 1): ghi file `/show.jsonl`
+(phân đoạn, clip theo phân đoạn, preset nhiều lớp) + 249 = lệnh phát show, phát / tạm dừng / dừng bằng lệnh
+`show` — không gửi lệnh `seg`/`playlist` cho mạch đang phát show. Chi tiết đầy đủ: xem `CLAUDE.md`.
 
 ## Lưu ý khác
 
