@@ -114,7 +114,8 @@
 
 ## Trình phát show (v1.10 — firmware 2611163+)
 
-Đã thử trên 4X (16×16, firmware v7) qua máy ảo `argb_tablet` ngày 2026-11-22. Còn cần thử trên tablet thật + 2X Pro.
+Đã thử trên 4X (16×16, firmware v7) qua máy ảo `argb_tablet` và tablet Xiaomi thật (bản debug cài song song
+`com.happysmartlight.argb.debug`) ngày 2026-11-22. Còn cần thử với 2X Pro.
 
 - [x] Bảng timeline tab ALL đọc 249 = lệnh phát show → hiện clip từ `/show.jsonl` (desktop "Ghi vào mạch").
 - [x] Phát / Tạm dừng (mạch đứng đúng khung) / Tiếp tục (chạy tiếp đúng chỗ) / Dừng (tắt, trả bố cục cũ) / hết bài.
@@ -123,5 +124,5 @@
 - [x] Tab Biên Tập: "Đọc 249 từ mạch" dựng clip từ file show; "Nạp vào 249" giữ nguyên phân đoạn + clip phân đoạn.
 - [ ] 2 mạch cùng phát show + 1 mạch firmware cũ (playlist) cùng lúc: lệch giữa các mạch, nhạc.
 - [ ] Mạch firmware cũ (chưa có show): nhập file có phân đoạn → chỉ hàng toàn mạch + cảnh báo; phát playlist như trước.
-- [ ] Mạch 16X hiện trong danh sách (bản cũ bị xoá khi ping).
+- [x] Mạch 16X hiện trong danh sách và không bị xoá khi ping (tablet thật, mDNS tự tìm thấy).
 - [ ] Lặp (loop) với file show: đồng hồ + nhạc quay vòng khớp mạch.
